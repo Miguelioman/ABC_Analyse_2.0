@@ -1,0 +1,552 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ABC Dashboard - Productanalyse</title>
+  <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
+  <style>
+    body{font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; padding:20px;}
+    header{display:flex;align-items:center;gap:20px;flex-wrap:wrap}
+    .card{background:#fff;border:1px solid #eee;padding:12px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.04)}
+    .controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+    #tablesWrap{margin-top:18px}
+    .small{font-size:0.9rem;color:#555}
+    .flex{display:flex;gap:12px;align-items:center}
+    .grow{flex:1}
+    canvas{max-width:100%;height:300px}
+    .inline-input{width:80px}
+    .muted{color:#666}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>ABC Dashboard — Productanalyse</h1>
+    <div class="small muted">Upload per maand een CSV (structuur zoals door jou opgegeven). De app draait volledig in de browser. Kopieer dit bestand naar je GitHub repo en open als GitHub Pages-site.</div>
+  </header>
+
+  <section class="card" aria-labelledby="uploadTitle">
+    <h2 id="uploadTitle">CSV upload (per maand)</h2>
+    <div class="controls">
+      <input type="month" id="monthPicker">
+      <input type="file" id="csvFile" accept=".csv">
+      <button id="uploadBtn">Upload en verwerk</button>
+      <button id="clearAll">Verwijder alle data</button>
+    </div>
+    <p class="small">Als je meerdere maanden uploadt worden ze bewaard in het geheugen van de browser (tot refresh). Elke upload moet het CSV-formaat gebruiken zoals in je voorbeeld.</p>
+  </section>
+
+  <section class="card" style="margin-top:12px">
+    <h3>Filters & weergave</h3>
+    <div class="controls">
+      <label class="flex">Productcategorie:
+        <select id="categoryFilter">
+          <option value="all">Alle</option>
+          <option value="sokken">Sokken</option>
+          <option value="compressiesokken">Compressiesokken</option>
+          <option value="klompen">Klompen</option>
+          <option value="mokken">Mokken</option>
+          <option value="sneakers">Sneakers</option>
+        </select>
+      </label>
+
+      <label class="flex">Toon categorie (A/B/C):
+        <select id="abcFilter">
+          <option value="all">Alle</option>
+          <option value="A">A</option>
+          <option value="B">B</option>
+          <option value="C">C</option>
+        </select>
+      </label>
+
+      <label class="flex">Zoek (naam of SKU, meerdere met komma):
+        <input id="productSearch" placeholder="naam of SKU" style="min-width:240px">
+      </label>
+
+      <button id="applyFilters">Toepassen</button>
+      <button id="resetFilters">Reset</button>
+    </div>
+  </section>
+
+  <section id="charts" class="card" style="margin-top:12px">
+    <h3>Visualisaties</h3>
+    <div class="controls">
+      <label>Maand voor piechart:
+        <select id="monthSelectPie"></select>
+      </label>
+      <button id="drawPie">Toon piechart</button>
+
+      <label>Trend (A/B/C % over tijd):
+        <select id="trendMode">
+          <option value="count">% producten (aantal)</option>
+          <option value="revenue">% op basis van omzet (revenue)</option>
+        </select>
+      </label>
+      <button id="drawTrend">Toon trend</button>
+    </div>
+    <div style="margin-top:12px">
+      <canvas id="mainChart"></canvas>
+    </div>
+  </section>
+
+  <section id="tablesWrap">
+    <div class="card" style="margin-top:12px">
+      <h3>Product overzicht (gefilterd)</h3>
+      <table id="productsTable" class="display" style="width:100%">
+        <thead>
+          <tr>
+            <th>Product title</th>
+            <th>SKU</th>
+            <th>Categorie</th>
+            <th>Maand</th>
+            <th>Start voorraad</th>
+            <th>Eind voorraad</th>
+            <th>Verkocht (units)</th>
+            <th>Verkoopwaarde (EUR)</th>
+            <th>ABC</th>
+            <th>Gem. score</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <h3>Top / Bottom verkopers</h3>
+      <div class="controls">
+        <label>Toon top N: <input id="topN" class="inline-input" type="number" value="10" min="1"></label>
+        <button id="showTop">Toon top per aantallen</button>
+        <button id="showTopRevenue">Toon top per omzet</button>
+        <button id="showBottom">Toon slechtst verkopend (aantal)</button>
+        <button id="showBottomRevenue">Toon slechtst per omzet</button>
+      </div>
+      <table id="topTable" class="display" style="width:100%"><thead><tr><th>Product</th><th>SKU</th><th>Totale units</th><th>Totale omzet</th></tr></thead><tbody></tbody></table>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <h3>Specifieke analyses</h3>
+      <div class="controls">
+        <button id="aNoStock">A-producten zonder voorraad (laatste maand)</button>
+        <button id="cWithStock">C-producten met voorraad (schatting dagen voorraad)</button>
+      </div>
+      <table id="analysisTable" class="display" style="width:100%"><thead><tr><th>Product</th><th>SKU</th><th>ABC (laatste)</th><th>Eind voorraad (laatst)</th><th>Extra</th></tr></thead><tbody></tbody></table>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <h3>Product historie & voorraadverloop</h3>
+      <div class="controls">
+        <label>Zoek product (naam of SKU): <input id="histSearch" placeholder="naam of SKU"></label>
+        <button id="showHistory">Toon historie</button>
+      </div>
+      <div id="historyResult"></div>
+      <canvas id="historyChart"></canvas>
+    </div>
+  </section>
+
+  <!-- scripts -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+  <script>
+  // --- Config & utilities ---
+  const PRICE_BY_CATEGORY = {
+    sokken: 10.95,
+    compressiesokken: 29.95,
+    klompen: 79.99,
+    mokken: 14.99,
+    sneakers: 99.99
+  };
+
+  // simple category mapper by product title
+  function mapCategory(title){
+    const t = title.toLowerCase();
+    if(t.includes('compressie') || t.includes('compressiesokken')) return 'compressiesokken';
+    if(t.includes('sok') || t.includes('sokken')) return 'sokken';
+    if(t.includes('klomp') || t.includes('klompen')) return 'klompen';
+    if(t.includes('mok') || t.includes('mokken')) return 'mokken';
+    if(t.includes('sneaker') || t.includes('sneakers')) return 'sneakers';
+    return 'overig';
+  }
+
+  function currency(x){return Number(x).toFixed(2);} 
+
+  // in-memory store: {monthStr: [rows...]}
+  const monthsData = {}; // monthStr like '2025-04'
+
+  // helper parse number
+  function n(v){const x=parseFloat(v); return isNaN(x)?0:x}
+
+  // convert ABC letter to numeric score
+  function abcScore(letter){ if(letter==='A') return 1; if(letter==='B') return 2; if(letter==='C') return 3; return null }
+
+  // --- CSV upload & processing ---
+  document.getElementById('uploadBtn').addEventListener('click', ()=>{
+    const file = document.getElementById('csvFile').files[0];
+    const month = document.getElementById('monthPicker').value;
+    if(!file){alert('Selecteer een CSV bestand.'); return}
+    if(!month){alert('Selecteer een maand (YYYY-MM).'); return}
+
+    Papa.parse(file, {header:true, skipEmptyLines:true, complete: (res)=>{
+      const raw = res.data;
+      // Clean & map rows
+      const rows = raw.map(r=>({
+        product_title: r['Product title'] || r['Product Title'] || r['product title'] || '',
+        variant_title: r['Product variant title'] || '',
+        sku: r['Product variant SKU'] || r['Product variant sku'] || r['SKU'] || r['sku'] || '',
+        start_inv: n(r['Starting inventory units']),
+        end_inv: n(r['Ending inventory units']),
+        sold: n(r['Inventory units sold']),
+        sell_through: n(r['Sell-through rate']),
+        // previous period fields kept if present
+        start_prev: n(r['Starting inventory units (previous_period)']||0),
+        end_prev: n(r['Ending inventory units (previous_period)']||0),
+        sold_prev: n(r['Inventory units sold (previous_period)']||0),
+        category: mapCategory(r['Product title']||''),
+      }))
+      .filter(r => r.start_inv > 0); // exclude starting inventory 0
+
+      monthsData[month] = rows;
+      refreshMonthSelects();
+      recomputeAll();
+      alert('Upload succesvol: ' + rows.length + ' regels voor ' + month);
+    }})
+  });
+
+  document.getElementById('clearAll').addEventListener('click', ()=>{
+    if(!confirm('Verwijder alle geüploade data uit geheugen?')) return;
+    for(const k in monthsData) delete monthsData[k];
+    recomputeAll();
+  });
+
+  // --- recompute & ABC logic ---
+  // ABC thresholds by revenue percent: A=80%, B=15%, C=5%
+  function computeABCForMonth(month){
+    const rows = monthsData[month] || [];
+    if(rows.length===0) return [];
+
+    // compute revenue per row based on category price mapping
+    rows.forEach(r=>{
+      const price = PRICE_BY_CATEGORY[r.category] || 0;
+      r.revenue = r.sold * price;
+    });
+
+    // group by product+sku (in file each row likely unique, but keep grouping general)
+    const grouped = {};
+    rows.forEach(r=>{
+      const key = r.product_title + '||' + r.sku;
+      if(!grouped[key]) grouped[key] = {...r, key:key};
+      else{
+        grouped[key].start_inv += r.start_inv;
+        grouped[key].end_inv += r.end_inv;
+        grouped[key].sold += r.sold;
+        grouped[key].revenue += r.revenue;
+      }
+    });
+    const arr = Object.values(grouped);
+    // sort by revenue desc
+    arr.sort((a,b)=>b.revenue - a.revenue);
+
+    const totalRevenue = arr.reduce((s,x)=>s+x.revenue,0);
+    let cum=0;
+    arr.forEach(item=>{
+      cum += item.revenue;
+      const pct = totalRevenue>0 ? (cum/totalRevenue)*100 : 0;
+      // assign based on cumulative revenue
+      if(pct <= 80) item.ABC = 'A';
+      else if(pct <= 95) item.ABC = 'B';
+      else item.ABC = 'C';
+    });
+    return arr;
+  }
+
+  function recomputeAll(){
+    // recompute ABC for each month and produce aggregated structures
+    window.computed = {byMonth:{}};
+    for(const m of Object.keys(monthsData).sort()){
+      window.computed.byMonth[m] = computeABCForMonth(m);
+    }
+    rebuildUI();
+  }
+
+  // --- UI builders & DataTables ---
+  let productsTable=null, topTable=null, analysisTable=null;
+  function rebuildUI(){
+    // populate month selects
+    refreshMonthSelects();
+    // rebuild product table rows: show all month rows combined (one row per product-month)
+    const tbody = [];
+    for(const [m, arr] of Object.entries(window.computed.byMonth||{})){
+      arr.forEach(item=>{
+        const avgScore = computeAvgScore(item.product_title, item.sku);
+        tbody.push({product:item.product_title, sku:item.sku, category:item.category, month:m, start:item.start_inv, end:item.end_inv, sold:item.sold, revenue:item.revenue, ABC:item.ABC, avgScore:avgScore});
+      });
+    }
+
+    // destroy existing datatables if any
+    if(productsTable) productsTable.destroy();
+    $('#productsTable tbody').empty();
+    tbody.forEach(r=>{
+      $('#productsTable tbody').append(`<tr>
+        <td>${r.product}</td>
+        <td>${r.sku}</td>
+        <td>${r.category}</td>
+        <td>${r.month}</td>
+        <td>${r.start}</td>
+        <td>${r.end}</td>
+        <td>${r.sold}</td>
+        <td>${currency(r.revenue)}</td>
+        <td>${r.ABC}</td>
+        <td>${r.avgScore !== null ? r.avgScore.toFixed(2) : ''}</td>
+      </tr>`)
+    });
+    productsTable = $('#productsTable').DataTable({order:[[0,'asc']]});
+
+    if(topTable) topTable.destroy(); $('#topTable tbody').empty(); topTable = $('#topTable').DataTable();
+    if(analysisTable) analysisTable.destroy(); $('#analysisTable tbody').empty(); analysisTable = $('#analysisTable').DataTable();
+  }
+
+  function refreshMonthSelects(){
+    const sel = document.getElementById('monthSelectPie');
+    sel.innerHTML='';
+    const months = Object.keys(monthsData).sort();
+    months.forEach(m=>{const opt=document.createElement('option');opt.value=m;opt.textContent=m;sel.appendChild(opt)});
+  }
+
+  // compute average score for product across months
+  function computeAvgScore(productTitle, sku){
+    const scores=[];
+    for(const [m, arr] of Object.entries(window.computed.byMonth||{})){
+      const found = arr.find(x=>x.product_title===productTitle && x.sku===sku);
+      if(found && found.ABC) scores.push(abcScore(found.ABC));
+    }
+    if(scores.length===0) return null;
+    return scores.reduce((a,b)=>a+b,0)/scores.length;
+  }
+
+  // --- Filters ---
+  document.getElementById('applyFilters').addEventListener('click', ()=>applyFilters());
+  document.getElementById('resetFilters').addEventListener('click', ()=>{document.getElementById('categoryFilter').value='all';document.getElementById('abcFilter').value='all';document.getElementById('productSearch').value='';applyFilters();});
+
+  function applyFilters(){
+    const cat = document.getElementById('categoryFilter').value;
+    const abc = document.getElementById('abcFilter').value;
+    const search = document.getElementById('productSearch').value.trim().toLowerCase();
+    const tokens = search?search.split(',').map(s=>s.trim()):[];
+
+    productsTable.rows().every(function(){
+      const data = this.data();
+      const title = $(data[0]).text ? $(data[0]).text() : data[0];
+      const sku = data[1];
+      const category = data[2];
+      const abcVal = data[8];
+      let show=true;
+      if(cat!=='all' && category!==cat) show=false;
+      if(abc!=='all' && abcVal!==abc) show=false;
+      if(tokens.length>0){
+        const matchAny = tokens.some(t=> title.toLowerCase().includes(t) || sku.toLowerCase().includes(t));
+        if(!matchAny) show=false;
+      }
+      this.visible(show);
+    });
+  }
+
+  // --- Top / bottom lists ---
+  function aggregateAll(){
+    const agg = {};
+    for(const [m, arr] of Object.entries(window.computed.byMonth||{})){
+      arr.forEach(it=>{
+        const k = it.product_title + '||' + it.sku;
+        if(!agg[k]) agg[k] = {product:it.product_title, sku:it.sku, units:0, revenue:0};
+        agg[k].units += it.sold;
+        agg[k].revenue += it.revenue;
+      })
+    }
+    return Object.values(agg);
+  }
+
+  document.getElementById('showTop').addEventListener('click', ()=>{
+    const N = parseInt(document.getElementById('topN').value)||10;
+    const data = aggregateAll().sort((a,b)=>b.units-a.units).slice(0,N);
+    renderTopTable(data);
+  });
+  document.getElementById('showTopRevenue').addEventListener('click', ()=>{
+    const N = parseInt(document.getElementById('topN').value)||10;
+    const data = aggregateAll().sort((a,b)=>b.revenue-a.revenue).slice(0,N);
+    renderTopTable(data);
+  });
+  document.getElementById('showBottom').addEventListener('click', ()=>{
+    const N = parseInt(document.getElementById('topN').value)||10;
+    const data = aggregateAll().sort((a,b)=>a.units-b.units).slice(0,N);
+    renderTopTable(data);
+  });
+  document.getElementById('showBottomRevenue').addEventListener('click', ()=>{
+    const N = parseInt(document.getElementById('topN').value)||10;
+    const data = aggregateAll().sort((a,b)=>a.revenue-b.revenue).slice(0,N);
+    renderTopTable(data);
+  });
+
+  function renderTopTable(rows){
+    if(topTable) topTable.destroy(); $('#topTable tbody').empty();
+    rows.forEach(r=>$('#topTable tbody').append(`<tr><td>${r.product}</td><td>${r.sku}</td><td>${r.units}</td><td>${currency(r.revenue)}</td></tr>`));
+    topTable = $('#topTable').DataTable();
+  }
+
+  // --- Specific analyses ---
+  document.getElementById('aNoStock').addEventListener('click', ()=>{
+    const months = Object.keys(window.computed.byMonth||{}).sort();
+    if(months.length===0){alert('Geen data'); return}
+    const last = months[months.length-1];
+    const arr = window.computed.byMonth[last] || [];
+    const rows = arr.filter(x=>x.ABC==='A' && x.end_inv===0).map(x=>({product:x.product_title, sku:x.sku, ABC:x.ABC, end:x.end_inv, extra:'Geen voorraad'}));
+    if(analysisTable) analysisTable.destroy(); $('#analysisTable tbody').empty();
+    rows.forEach(r=>$('#analysisTable tbody').append(`<tr><td>${r.product}</td><td>${r.sku}</td><td>${r.ABC}</td><td>${r.end}</td><td>${r.extra}</td></tr>`));
+    analysisTable = $('#analysisTable').DataTable();
+  });
+
+  document.getElementById('cWithStock').addEventListener('click', ()=>{
+    // compute average monthly sold per product across available months, then estimate days left = end_inv / (avg_daily_sold)
+    const months = Object.keys(window.computed.byMonth||{}).sort();
+    if(months.length===0){alert('Geen data'); return}
+    const last = months[months.length-1];
+    const arrLast = window.computed.byMonth[last] || [];
+    const rows = [];
+    arrLast.forEach(item=>{
+      if(item.ABC==='C' && item.end_inv>0){
+        // compute avg monthly sold across months where product exists
+        let totalSold=0, monthsCount=0;
+        for(const m of months){
+          const found = (window.computed.byMonth[m]||[]).find(x=>x.product_title===item.product_title && x.sku===item.sku);
+          if(found){ totalSold += found.sold; monthsCount++; }
+        }
+        const avgMonthly = monthsCount>0 ? totalSold / monthsCount : 0;
+        const avgDaily = avgMonthly / 30.0; // approx
+        const daysLeft = avgDaily>0 ? Math.round(item.end_inv / avgDaily) : 'N/A';
+        rows.push({product:item.product_title, sku:item.sku, ABC:item.ABC, end:item.end_inv, daysLeft: daysLeft});
+      }
+    });
+    rows.sort((a,b)=> (b.daysLeft==='N/A'? -1 : b.daysLeft) - (a.daysLeft==='N/A'? -1 : a.daysLeft));
+    if(analysisTable) analysisTable.destroy(); $('#analysisTable tbody').empty();
+    rows.forEach(r=>$('#analysisTable tbody').append(`<tr><td>${r.product}</td><td>${r.sku}</td><td>${r.ABC}</td><td>${r.end}</td><td>${r.daysLeft}</td></tr>`));
+    analysisTable = $('#analysisTable').DataTable();
+  });
+
+  // --- Piechart & trend ---
+  let mainChart=null;
+  document.getElementById('drawPie').addEventListener('click', ()=>{
+    const month = document.getElementById('monthSelectPie').value;
+    if(!month){alert('Selecteer maand'); return}
+    const arr = window.computed.byMonth[month]||[];
+    const totals = {A:0,B:0,C:0};
+    let totalRevenue=0;
+    arr.forEach(x=>{ totals[x.ABC] = (totals[x.ABC]||0) + x.revenue; totalRevenue += x.revenue; });
+    const labels = ['A','B','C'];
+    const data = labels.map(l=> totals[l] || 0);
+    renderMainChart({type:'pie',labels, data, title: 'Omzet per ABC in '+month});
+  });
+
+  document.getElementById('drawTrend').addEventListener('click', ()=>{
+    const mode = document.getElementById('trendMode').value;
+    const months = Object.keys(window.computed.byMonth||{}).sort();
+    if(months.length===0){alert('Geen data'); return}
+    const series = {A:[], B:[], C:[]};
+    months.forEach(m=>{
+      const arr = window.computed.byMonth[m]||[];
+      if(mode==='count'){
+        const total = arr.length || 1;
+        const cntA = arr.filter(x=>x.ABC==='A').length;
+        const cntB = arr.filter(x=>x.ABC==='B').length;
+        const cntC = arr.filter(x=>x.ABC==='C').length;
+        series.A.push( (cntA/total)*100 );
+        series.B.push( (cntB/total)*100 );
+        series.C.push( (cntC/total)*100 );
+      } else {
+        const revTotal = arr.reduce((s,x)=>s+(x.revenue||0),0) || 1;
+        const revA = arr.filter(x=>x.ABC==='A').reduce((s,x)=>s+(x.revenue||0),0);
+        const revB = arr.filter(x=>x.ABC==='B').reduce((s,x)=>s+(x.revenue||0),0);
+        const revC = arr.filter(x=>x.ABC==='C').reduce((s,x)=>s+(x.revenue||0),0);
+        series.A.push((revA/revTotal)*100);
+        series.B.push((revB/revTotal)*100);
+        series.C.push((revC/revTotal)*100);
+      }
+    });
+    renderMainChart({type:'line',labels:months, dataSeries:series, title: 'Trend ABC % over tijd ('+mode+')'});
+  });
+
+  function renderMainChart(opts){
+    if(mainChart) mainChart.destroy();
+    const ctx = document.getElementById('mainChart').getContext('2d');
+    if(opts.type==='pie'){
+      mainChart = new Chart(ctx, {type:'pie', data:{labels:opts.labels, datasets:[{data:opts.data}]}, options:{plugins:{title:{display:true,text:opts.title}}}});
+    } else {
+      mainChart = new Chart(ctx, {type:'line', data:{labels:opts.labels, datasets:[{label:'A %',data:opts.dataSeries.A, tension:0.3},{label:'B %',data:opts.dataSeries.B, tension:0.3},{label:'C %',data:opts.dataSeries.C, tension:0.3}]}, options:{plugins:{title:{display:true,text:opts.title}}}});
+    }
+  }
+
+  // --- History view ---
+  document.getElementById('showHistory').addEventListener('click', ()=>{
+    const q = document.getElementById('histSearch').value.trim().toLowerCase();
+    if(!q){alert('Voer een productnaam of SKU in');return}
+    const tokens = q.split(',').map(s=>s.trim());
+    // find matching keys across months
+    const months = Object.keys(window.computed.byMonth||{}).sort();
+    const matchedProducts = {};
+    for(const m of months){
+      const arr = window.computed.byMonth[m]||[];
+      arr.forEach(it=>{
+        const key = it.product_title + '||' + it.sku;
+        const title = it.product_title.toLowerCase();
+        const sku = it.sku.toLowerCase();
+        const match = tokens.some(t=> title.includes(t) || sku.includes(t));
+        if(match){ if(!matchedProducts[key]) matchedProducts[key] = {product:it.product_title, sku:it.sku, months:{}}; matchedProducts[key].months[m]=it; }
+      })
+    }
+    renderHistory(matchedProducts, months);
+  });
+
+  function renderHistory(matched, months){
+    const container = document.getElementById('historyResult'); container.innerHTML='';
+    const keys = Object.keys(matched);
+    if(keys.length===0){container.innerHTML='<p>Geen producten gevonden</p>'; return}
+
+    // table of ABC per month and avg score
+    let html = '<table style="width:100%;border-collapse:collapse"><thead><tr><th>Product</th><th>SKU</th>' + months.map(m=>`<th>${m}</th>`).join('') + '<th>Gem. score</th></tr></thead><tbody>';
+    keys.forEach(k=>{
+      const p = matched[k];
+      const scores = [];
+      html += `<tr><td>${p.product}</td><td>${p.sku}</td>`;
+      months.forEach(m=>{
+        const it = p.months[m];
+        if(it){ html += `<td>${it.ABC}</td>`; scores.push(abcScore(it.ABC)); }
+        else{ html += `<td>-</td>` }
+      });
+      const avg = scores.length? (scores.reduce((a,b)=>a+b,0)/scores.length).toFixed(2) : '-';
+      html += `<td>${avg}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+
+    // inventory chart for first matched product (allow choosing)
+    const first = matched[keys[0]];
+    const invLabels = months.slice();
+    const invData = months.map(m=> first.months[m] ? first.months[m].start_inv : null);
+    const endData = months.map(m=> first.months[m] ? first.months[m].end_inv : null);
+    if(window.historyChart) window.historyChart.destroy();
+    const ctx = document.getElementById('historyChart').getContext('2d');
+    window.historyChart = new Chart(ctx, {type:'bar', data:{labels:invLabels, datasets:[{type:'line',label:'Start voorraad',data:invData, tension:0.3},{type:'bar',label:'Eind voorraad',data:endData}]}, options:{plugins:{title:{display:true,text:'Voorraadverloop: '+first.product}}}});
+  }
+
+  // --- init ---
+  $(document).ready(()=>{
+    productsTable = $('#productsTable').DataTable();
+    topTable = $('#topTable').DataTable();
+    analysisTable = $('#analysisTable').DataTable();
+  });
+
+  // Small helper to expose current data for easier debugging
+  window._monthsData = monthsData;
+
+  </script>
+</body>
+</html>
