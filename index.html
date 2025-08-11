@@ -1,222 +1,638 @@
-<script>
-// --- Config & helpers ---
-const PRICE_BY_CATEGORY = { sokken:10.95, compressiesokken:29.95, klompen:79.99, mokken:14.99, sneakers:99.99 };
-function mapCategory(title){ const t=(title||'').toLowerCase(); if(t.includes('compressie')) return 'compressiesokken'; if(t.includes('sok')) return 'sokken'; if(t.includes('klomp')) return 'klompen'; if(t.includes('mok')) return 'mokken'; if(t.includes('sneak')) return 'sneakers'; return 'overig'; }
-function n(v){const x=parseFloat(v); return isNaN(x)?0:x}
-function abcScore(letter){ if(letter==='A') return 1; if(letter==='B') return 2; if(letter==='C') return 3; return null }
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ABC Dashboard — Multi-maand CSV upload & analyse</title>
 
-// Data stores
-const monthsData = {}; // raw rows per month
-const computed = { byMonth:{} }; // grouped + ABC per month
-let aggregated = {}; // aggregated per SKU across months
+<link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
+<style>
+  :root{--card-bg:#fff;--muted:#666}
+  body{font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; padding:18px; background:#f6f7fb; color:#111}
+  header{display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap;margin-bottom:12px}
+  h1{margin:0;font-size:1.25rem}
+  .card{background:var(--card-bg);border:1px solid #e8e9ee;padding:14px;border-radius:10px;box-shadow:0 2px 8px rgba(18,24,40,0.04); margin-bottom:12px}
+  .controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .small{font-size:0.9rem;color:var(--muted)}
+  .inline-input{width:70px}
+  .muted{color:var(--muted)}
+  .status-yes{color:green;font-weight:700}
+  .status-no{color:red;font-weight:700}
+  .flex-col{display:flex;flex-direction:column;gap:8px}
+  .table-wrap{overflow:auto}
+  canvas{max-width:100%;height:260px}
+  label{font-size:0.95rem}
+  input[type="text"], select, input[type="number"]{padding:6px;border-radius:6px;border:1px solid #d6d7dc}
+  button{padding:7px 10px;border-radius:8px;border:1px solid #cfd2da;background:#fff;cursor:pointer}
+  button.primary{background:#1f6feb;color:#fff;border-color:#165fc3}
+  .side-by-side{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .right{margin-left:auto}
+  pre.smallcode{background:#0f1724;color:#fff;padding:8px;border-radius:6px;overflow:auto}
+</style>
+</head>
+<body>
+  <header>
+    <h1>ABC Dashboard — Multi-maand upload & analyse</h1>
+    <div class="small muted">Upload per maand een CSV met minimaal: Product title, Product variant SKU (SKU), Starting inventory units, Ending inventory units, Inventory units sold.</div>
+  </header>
 
-// DataTables refs
-let aggregatedTable = null, productsTable=null, topTable=null, analysisTable=null;
-let pieChart=null, trendChart=null, historyChart=null;
+  <section class="card" aria-labelledby="uploadTitle">
+    <h2 id="uploadTitle">Upload maandelijkse CSV</h2>
+    <div class="controls">
+      <label>Maand: <input type="month" id="monthPicker"></label>
+      <input type="file" id="csvFile" accept=".csv">
+      <button id="uploadBtn" class="primary">Upload en verwerk</button>
+      <button id="clearAll">Verwijder alle data</button>
+      <div class="right small muted">Data blijft in browser (session). Gebruik 'Verwijder alle data' om opnieuw te beginnen.</div>
+    </div>
+    <p class="small">De CSV-kopteksten worden slim herkend (case-insensitive). Als je wilt, kun je ook bestanden met kolomnamen zoals "SKU", "Starting inventory units", "Ending inventory units", "Inventory units sold" gebruiken.</p>
+  </section>
 
-// --- CSV upload ---
-document.getElementById('uploadBtn').addEventListener('click', ()=>{
-  const file = document.getElementById('csvFile').files[0];
-  const month = document.getElementById('monthPicker').value;
-  if(!file){alert('Selecteer CSV bestand'); return}
-  if(!month){alert('Selecteer een maand (YYYY-MM)'); return}
+  <section class="card">
+    <h3>Instellingen weergave & filters</h3>
+    <div class="controls">
+      <label>Product type: 
+        <select id="typeFilter">
+          <option value="all">Alle</option>
+          <option value="sokken">Sokken</option>
+          <option value="compressiesokken">Compressiesokken</option>
+          <option value="klompen">Klompen</option>
+          <option value="mokken">Mokken</option>
+          <option value="sneakers">Sneakers</option>
+          <option value="overig">Overig</option>
+        </select>
+      </label>
 
-  Papa.parse(file, {
-    header:true,
-    skipEmptyLines:true,
-    complete: (res)=>{
-      const raw = res.data;
-      if(!raw.length){ alert('Geen data gevonden in CSV'); return; }
+      <label>Categorie (ABC): 
+        <select id="abcFilter">
+          <option value="all">Alle</option>
+          <option value="A">A</option>
+          <option value="B">B</option>
+          <option value="C">C</option>
+        </select>
+      </label>
 
-      // Maak kolomnamen lowercase zonder spaties voor robuuste mapping
-      const normalizeKey = k => (k||'').toString().trim().toLowerCase().replace(/\s+/g,' ');
-      const rows = raw.map(r=>{
-        const obj = {};
-        for(const key in r){
-          obj[normalizeKey(key)] = r[key];
+      <label>Voorraad status:
+        <select id="stockFilter">
+          <option value="all">Alle</option>
+          <option value="in">Op voorraad (laatst)</option>
+          <option value="out">Geen voorraad</option>
+        </select>
+      </label>
+
+      <label>Zoek (naam of SKU): <input type="text" id="globalSearch" placeholder="deel naam of SKU"></label>
+      <button id="applyFilters">Toepassen filter</button>
+      <button id="resetFilters">Reset</button>
+    </div>
+    <p class="small">Filters passen zich direct toe op het overzicht onderaan.</p>
+  </section>
+
+  <section class="card">
+    <h3>Overzicht — Unieke producten (SKU)</h3>
+    <div class="table-wrap">
+      <table id="aggregatedTable" class="display" style="width:100%">
+        <thead>
+          <tr>
+            <th>Product title</th>
+            <th>SKU</th>
+            <th>Type</th>
+            <th>ABC historie (per maand)</th>
+            <th>Gem. score</th>
+            <th>Totaal verkocht</th>
+            <th>Eindvoorraad (laatst)</th>
+            <th>Op voorraad?</th>
+            <th>Maanden op voorraad</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <h3>Top / Bottom verkopers (instelbaar)</h3>
+    <div class="controls">
+      <label>Toon top N: <input id="topN" class="inline-input" type="number" value="10" min="1"></label>
+      <label>Toon op voorraad:
+        <select id="rankStockFilter">
+          <option value="all">Alle</option>
+          <option value="in">Alleen op voorraad</option>
+          <option value="out">Alleen uit voorraad</option>
+        </select>
+      </label>
+      <button id="showTop" class="primary">Toon Top</button>
+      <button id="showBottom" class="">Toon Bottom</button>
+    </div>
+
+    <p class="small">Ranking combineert: lage gemiddelde score (A=1 beter), veel maanden op voorraad, en totaal verkocht. Gewichting is aanpasbaar in de code (zie commentaar).</p>
+
+    <div style="margin-top:10px" class="table-wrap">
+      <table id="rankTable" class="display" style="width:100%">
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>SKU</th>
+            <th>ABC historie</th>
+            <th>Gem. score</th>
+            <th>Totaal verkocht</th>
+            <th>Maanden op voorraad</th>
+            <th>Meest actuele voorraad</th>
+            <th>Op voorraad?</th>
+            <th>Rank score</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <h3>Charts</h3>
+    <div class="controls">
+      <label>Maand voor pie: <select id="monthSelectPie"></select></label>
+      <button id="drawPie">Toon pie</button>
+
+      <label>Trend mode:
+        <select id="trendMode">
+          <option value="count">% producten (aantal)</option>
+          <option value="revenue">% op basis van omzet</option>
+        </select>
+      </label>
+      <button id="drawTrend">Toon trend</button>
+    </div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px">
+      <canvas id="pieCanvas" style="flex:1;min-width:280px"></canvas>
+      <canvas id="trendCanvas" style="flex:1;min-width:280px"></canvas>
+    </div>
+  </section>
+
+  <section class="card">
+    <h3>Debug / Export</h3>
+    <div class="controls">
+      <button id="exportAggregated">Exporteer overzicht (CSV)</button>
+      <button id="exportRank">Exporteer ranking (CSV)</button>
+      <button id="logData">Log interne data (console)</button>
+    </div>
+    <p class="small">Gebruik export om snel een CSV van het overzicht te krijgen.</p>
+  </section>
+
+  <!-- libraries -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+  <script>
+  // === Config & helpers ===
+  const PRICE_BY_CATEGORY = { sokken:10.95, compressiesokken:29.95, klompen:79.99, mokken:14.99, sneakers:99.99, overig:19.99 };
+  function mapCategory(title){
+    const t = (title||'').toLowerCase();
+    if(t.includes('compressie')) return 'compressiesokken';
+    if(t.includes('sok')) return 'sokken';
+    if(t.includes('klomp')) return 'klompen';
+    if(t.includes('mok')) return 'mokken';
+    if(t.includes('sneak')) return 'sneakers';
+    return 'overig';
+  }
+  function n(v){ const x = parseFloat((v===null||v===undefined)?0:v); return isNaN(x)?0:x; }
+  function abcScore(letter){ if(letter==='A') return 1; if(letter==='B') return 2; if(letter==='C') return 3; return null; }
+
+  // Data stores
+  const monthsData = {};    // raw normalized rows per month: monthsData['2025-08'] = [ {product_title, sku, start_inv, end_inv, sold, category}, ... ]
+  const computed = { byMonth:{} }; // computed ABC per month
+  let aggregated = {};     // aggregated per SKU across months
+
+  // DataTables refs
+  let aggregatedTable = null, rankTable=null;
+  let pieChart=null, trendChart=null;
+
+  // initialize DataTables on empty tables (so they exist)
+  $(document).ready(()=>{
+    aggregatedTable = $('#aggregatedTable').DataTable({ order:[[0,'asc']], columns: null });
+    rankTable = $('#rankTable').DataTable({ order:[[3,'asc']] });
+  });
+
+  // --- CSV upload ---
+  document.getElementById('uploadBtn').addEventListener('click', ()=>{
+    const file = document.getElementById('csvFile').files[0];
+    const month = document.getElementById('monthPicker').value;
+    if(!file){ alert('Selecteer CSV bestand'); return; }
+    if(!month){ alert('Selecteer een maand (YYYY-MM)'); return; }
+
+    Papa.parse(file, {
+      header:true,
+      skipEmptyLines:true,
+      complete: (res)=>{
+        const raw = res.data;
+        if(!raw || raw.length===0){ alert('Geen data gevonden in CSV'); return; }
+
+        // normalized keys: lowercase, trimmed, single space for multiword
+        const normKey = k => (k||'').toString().trim().toLowerCase().replace(/\s+/g,' ');
+        const rows = raw.map(r=>{
+          const obj = {};
+          for(const k in r){
+            obj[normKey(k)] = r[k];
+          }
+          // try common name variants for fields
+          const title = obj['product title'] || obj['product'] || obj['product name'] || '';
+          const sku = obj['product variant sku'] || obj['sku'] || obj['product sku'] || obj['variant sku'] || '';
+          const startInv = n(obj['starting inventory units'] || obj['start inventory'] || obj['starting inventory'] || obj['starting inventory units (units)'] || obj['starting inventory units (units)'] || obj['starting inventory units']);
+          const endInv = n(obj['ending inventory units'] || obj['end inventory'] || obj['ending inventory'] || obj['ending inventory units']);
+          const sold = n(obj['inventory units sold'] || obj['units sold'] || obj['sold'] || obj['inventory sold']);
+          const category = mapCategory(title);
+          return {
+            product_title: title,
+            sku: sku,
+            start_inv: startInv,
+            end_inv: endInv,
+            sold: sold,
+            category: category
+          };
+        });
+
+        // store month
+        monthsData[month] = rows;
+        recomputeAll();
+        refreshMonthSelects();
+        updateFilters();
+        alert(`Upload succesvol: ${rows.length} regels voor ${month}`);
+      },
+      error: (err)=>{
+        console.error('Papa parse error', err);
+        alert('Fout bij inlezen CSV: ' + (err.message || 'onbekend'));
+      }
+    });
+  });
+
+  document.getElementById('clearAll').addEventListener('click', ()=>{
+    if(!confirm('Verwijder alle data?')) return;
+    for(const m in monthsData) delete monthsData[m];
+    recomputeAll();
+    updateFilters();
+    alert('Alle data verwijderd');
+  });
+
+  // --- computation: ABC per month based on sold ---
+  function computeABCForMonthUnits(month){
+    const rows = monthsData[month] || [];
+    const grouped = {};
+    rows.forEach(r=>{
+      const key = (r.sku || '') + '||' + (r.product_title || '');
+      if(!grouped[key]) grouped[key] = { product_title: r.product_title || '', sku: r.sku || '', category: r.category || 'overig', start_inv: r.start_inv||0, end_inv: r.end_inv||0, sold: r.sold||0 };
+      else {
+        grouped[key].start_inv += r.start_inv || 0;
+        grouped[key].end_inv += r.end_inv || 0;
+        grouped[key].sold += r.sold || 0;
+      }
+    });
+    const arr = Object.values(grouped);
+    // sort by sold desc
+    arr.sort((a,b)=> b.sold - a.sold);
+    const totalSold = arr.reduce((s,x)=> s + (x.sold || 0), 0) || 1;
+    let cum = 0;
+    arr.forEach(it=>{
+      cum += it.sold;
+      const pct = (cum/totalSold)*100;
+      if(pct <= 80) it.ABC = 'A';
+      else if(pct <= 95) it.ABC = 'B';
+      else it.ABC = 'C';
+    });
+    return arr;
+  }
+
+  function recomputeAll(){
+    // recompute per month ABC
+    computed.byMonth = {};
+    Object.keys(monthsData).sort().forEach(m=>{
+      computed.byMonth[m] = computeABCForMonthUnits(m);
+    });
+    buildAggregated();
+    rebuildTables();
+  }
+
+  function buildAggregated(){
+    aggregated = {}; // SKU => aggregated object
+    const months = Object.keys(computed.byMonth).sort();
+
+    months.forEach(m=>{
+      (computed.byMonth[m] || []).forEach(it=>{
+        const sku = it.sku || ('__no_sku__' + Math.random().toString(36).slice(2,8));
+        if(!aggregated[sku]){
+          aggregated[sku] = {
+            name: it.product_title || '',
+            sku: sku,
+            type: it.category || 'overig',
+            historyMap: {},
+            totalSold: 0,
+            monthsSeen: 0,
+            monthsInStock: 0,
+            latest_end: 0
+          };
         }
-        return {
-          product_title: obj['product title'] || '',
-          variant_title: obj['product variant title'] || '',
-          sku: obj['product variant sku'] || obj['sku'] || '',
-          start_inv: n(obj['starting inventory units']),
-          end_inv: n(obj['ending inventory units']),
-          sold: n(obj['inventory units sold']),
-          category: mapCategory(obj['product title'] || ''),
-        };
+        aggregated[sku].historyMap[m] = it.ABC || '-';
+        aggregated[sku].totalSold += (it.sold || 0);
       });
+    });
 
-      // Laat alles door, filteren doen we pas in de berekeningen
-      monthsData[month] = rows;
-      recomputeAll();
-      refreshMonthSelects();
-      updateFilters();
-      alert('Upload succesvol: '+rows.length+' regels voor '+month);
+    // compute aligned history array & metrics
+    const lastMonth = months.length ? months[months.length - 1] : null;
+    Object.keys(aggregated).forEach(sku=>{
+      const prod = aggregated[sku];
+      prod.history = months.map(m => prod.historyMap[m] ? prod.historyMap[m] : '-');
+      // average score across months where ABC exists
+      const scores = prod.history.filter(c=> c==='A'||c==='B'||c==='C').map(c=> abcScore(c));
+      prod.avgScore = scores.length ? (scores.reduce((a,b)=>a+b,0) / scores.length) : null;
+      // months seen
+      prod.monthsSeen = prod.history.filter(h => h !== '-').length;
+      // months in stock: count months where end_inv > 0 (need to find in computed.byMonth)
+      let monthsInStock = 0;
+      Object.keys(computed.byMonth).forEach(m=>{
+        const found = (computed.byMonth[m]||[]).find(x=>x.sku === sku);
+        if(found && found.end_inv > 0) monthsInStock++;
+      });
+      prod.monthsInStock = monthsInStock;
+      // latest end_inv
+      if(lastMonth){
+        const found = (computed.byMonth[lastMonth]||[]).find(x=>x.sku === sku);
+        prod.latest_end = found ? (found.end_inv || 0) : 0;
+        prod.in_stock = prod.latest_end > 0;
+      } else {
+        prod.latest_end = 0; prod.in_stock = false;
+      }
+      // revenue
+      const price = PRICE_BY_CATEGORY[prod.type] || 0;
+      prod.totalRevenue = prod.totalSold * price;
+      // ensure avgScore string
+      prod.avgScoreText = prod.avgScore ? prod.avgScore.toFixed(2) : '-';
+    });
+  }
+
+  // --- UI helpers: month selects & filters ---
+  function refreshMonthSelects(){
+    const sel = document.getElementById('monthSelectPie'); sel.innerHTML = '<option value="">-- kies maand --</option>';
+    Object.keys(monthsData).sort().forEach(m=>{
+      const opt = document.createElement('option'); opt.value = m; opt.text = m; sel.appendChild(opt);
+    });
+  }
+
+  function updateFilters(){
+    // rebuild aggregated table's SKU filter? We have global search so not necessary.
+    refreshMonthSelects();
+    rebuildTables();
+  }
+
+  document.getElementById('applyFilters').addEventListener('click', ()=>rebuildTables());
+  document.getElementById('resetFilters').addEventListener('click', ()=>{
+    document.getElementById('typeFilter').value = 'all';
+    document.getElementById('abcFilter').value = 'all';
+    document.getElementById('stockFilter').value = 'all';
+    document.getElementById('globalSearch').value = '';
+    rebuildTables();
+  });
+
+  // --- rebuild visible tables ---
+  function rebuildTables(){
+    rebuildAggregatedTable();
+    // clear rank table
+    if($.fn.dataTable.isDataTable('#rankTable')){ rankTable.destroy(); $('#rankTable tbody').empty(); rankTable = $('#rankTable').DataTable({ order:[[3,'asc']] }); }
+  }
+
+  function rebuildAggregatedTable(){
+    // destroy datatable if exists
+    if($.fn.dataTable.isDataTable('#aggregatedTable')){
+      aggregatedTable.destroy();
+      $('#aggregatedTable tbody').empty();
     }
+
+    const skuSearch = (document.getElementById('globalSearch').value || '').trim().toLowerCase();
+    const typeFilter = document.getElementById('typeFilter').value;
+    const abcFilter = document.getElementById('abcFilter').value;
+    const stockFilter = document.getElementById('stockFilter').value;
+
+    Object.values(aggregated).forEach(p=>{
+      // filters
+      if(typeFilter !== 'all' && p.type !== typeFilter) return;
+      // abcFilter: check latest ABC or any history include
+      if(abcFilter !== 'all'){
+        const latest = p.history.length ? p.history[p.history.length - 1] : '-';
+        if(!p.history.includes(abcFilter) && latest !== abcFilter) return;
+      }
+      if(stockFilter === 'in' && !p.in_stock) return;
+      if(stockFilter === 'out' && p.in_stock) return;
+      // search
+      if(skuSearch){
+        const hay = (p.name + ' ' + p.sku).toLowerCase();
+        if(!hay.includes(skuSearch)) return;
+      }
+      const inStockText = p.in_stock ? '<span class="status-yes">Ja</span>' : '<span class="status-no">Nee</span>';
+      $('#aggregatedTable tbody').append(`
+        <tr>
+          <td>${escapeHtml(p.name)}</td>
+          <td>${escapeHtml(p.sku)}</td>
+          <td>${escapeHtml(p.type)}</td>
+          <td>${p.history.join(', ')}</td>
+          <td>${p.avgScore ? p.avgScore.toFixed(2) : '-'}</td>
+          <td>${p.totalSold}</td>
+          <td>${p.latest_end}</td>
+          <td>${inStockText}</td>
+          <td>${p.monthsInStock}</td>
+        </tr>
+      `);
+    });
+
+    aggregatedTable = $('#aggregatedTable').DataTable({ order:[[0,'asc']], columns: null, destroy:true });
+  }
+
+  // Utility to escape HTML in text
+  function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+
+  // --- Top/Bottom ranking logic ---
+  // We compute a composite rank score combining:
+  // - avgScoreNormalized: lower is better (A=1 -> normalized close to 1). We invert so better = higher.
+  // - monthsInStockNormalized: higher is better
+  // - totalSoldNormalized: higher is better
+  //
+  // finalRankScore = w1 * (1 - (avgScore - 1)/2) + w2 * (monthsInStock / totalMonths) + w3 * (totalSold / maxTotalSold)
+  // weights can be adjusted here.
+  function computeRankRows(){
+    const rows = Object.values(aggregated).map(p => {
+      // totals
+      return {
+        product: p.name,
+        sku: p.sku,
+        history: p.history.join(', '),
+        avgScore: p.avgScore || 3,
+        avgScoreText: p.avgScore ? p.avgScore.toFixed(2) : '-',
+        totalSold: p.totalSold || 0,
+        monthsInStock: p.monthsInStock || 0,
+        latest_end: p.latest_end || 0,
+        in_stock: p.in_stock ? 'Ja' : 'Nee'
+      };
+    });
+
+    if(rows.length === 0) return rows;
+    const totalMonths = Object.keys(computed.byMonth).length || 1;
+    const maxSold = Math.max(...rows.map(r=>r.totalSold), 1);
+
+    // weights (tuneable)
+    const wAvg = 0.45, wMonths = 0.25, wSold = 0.30;
+
+    rows.forEach(r=>{
+      const avgScoreNorm = r.avgScore ? (r.avgScore - 1) / 2 : 1; // maps 1..3 to 0..1
+      const avgScoreInvert = 1 - avgScoreNorm; // higher is better
+      const monthsNorm = (r.monthsInStock || 0) / totalMonths;
+      const soldNorm = r.totalSold / maxSold;
+      r.rankScore = (wAvg * avgScoreInvert) + (wMonths * monthsNorm) + (wSold * soldNorm);
+      // keep numeric for sorting & presentation
+      r.rankScoreDisplay = r.rankScore.toFixed(4);
+    });
+
+    return rows;
+  }
+
+  document.getElementById('showTop').addEventListener('click', ()=>{
+    const N = Math.max(1, parseInt(document.getElementById('topN').value || 10));
+    const stockFilter = document.getElementById('rankStockFilter').value;
+    let rows = computeRankRows();
+    if(stockFilter === 'in') rows = rows.filter(r => r.in_stock === 'Ja');
+    if(stockFilter === 'out') rows = rows.filter(r => r.in_stock === 'Nee');
+    rows.sort((a,b)=> b.rankScore - a.rankScore); // descending -> best first
+    rows = rows.slice(0, N);
+    renderRankTable(rows);
   });
-});
 
-document.getElementById('clearAll').addEventListener('click', ()=>{ if(!confirm('Verwijder alle data?')) return; for(const k in monthsData) delete monthsData[k]; recomputeAll(); updateFilters(); });
-
-// --- compute ABC per month (on units sold) ---
-function computeABCForMonthUnits(month){
-  const rows = monthsData[month]||[];
-  // group by product+sku
-  const grouped = {};
-  rows.forEach(r=>{
-    const key = r.product_title+'||'+r.sku;
-    if(!grouped[key]) grouped[key] = {product_title:r.product_title, sku:r.sku, category:r.category, start_inv:r.start_inv, end_inv:r.end_inv, sold:r.sold};
-    else{ grouped[key].start_inv += r.start_inv; grouped[key].end_inv += r.end_inv; grouped[key].sold += r.sold; }
+  document.getElementById('showBottom').addEventListener('click', ()=>{
+    const N = Math.max(1, parseInt(document.getElementById('topN').value || 10));
+    const stockFilter = document.getElementById('rankStockFilter').value;
+    let rows = computeRankRows();
+    if(stockFilter === 'in') rows = rows.filter(r => r.in_stock === 'Ja');
+    if(stockFilter === 'out') rows = rows.filter(r => r.in_stock === 'Nee');
+    rows.sort((a,b)=> a.rankScore - b.rankScore); // ascending -> worst first
+    rows = rows.slice(0, N);
+    renderRankTable(rows);
   });
 
-  const arr = Object.values(grouped);
-  arr.sort((a,b)=> b.sold - a.sold);
-  const totalSold = arr.reduce((s,x)=>s+x.sold,0)||1;
-  let cum = 0;
-  arr.forEach(it=>{
-    cum += it.sold;
-    const pct = (cum/totalSold)*100;
-    if(pct<=80) it.ABC='A';
-    else if(pct<=95) it.ABC='B';
-    else it.ABC='C';
-  });
-  return arr;
-}
+  function renderRankTable(rows){
+    if($.fn.dataTable.isDataTable('#rankTable')){ rankTable.destroy(); $('#rankTable tbody').empty(); }
+    rows.forEach(r=>{
+      $('#rankTable tbody').append(`<tr>
+        <td>${escapeHtml(r.product)}</td>
+        <td>${escapeHtml(r.sku)}</td>
+        <td>${r.history}</td>
+        <td>${r.avgScoreText}</td>
+        <td>${r.totalSold}</td>
+        <td>${r.monthsInStock}</td>
+        <td>${r.latest_end}</td>
+        <td>${r.in_stock}</td>
+        <td>${r.rankScoreDisplay}</td>
+      </tr>`);
+    });
+    rankTable = $('#rankTable').DataTable({ order:[[8,'desc']] });
+  }
 
-function recomputeAll(){
-  computed.byMonth = {};
-  Object.keys(monthsData).sort().forEach(m=>{
-    computed.byMonth[m] = computeABCForMonthUnits(m);
-  });
-  buildAggregated();
-  rebuildTables();
-}
-
-function buildAggregated(){
-  aggregated = {};
-  const months = Object.keys(computed.byMonth).sort();
-  months.forEach(m=>{
-    computed.byMonth[m].forEach(it=>{
-      const sku = it.sku;
-      if(!aggregated[sku]) aggregated[sku] = { name: it.product_title, sku: sku, type: it.category, historyMap:{}, totalSold:0 };
-      aggregated[sku].historyMap[m] = it.ABC;
-      aggregated[sku].totalSold += it.sold;
+  // --- Charts: pie per month & trend over time ---
+  document.getElementById('drawPie').addEventListener('click', ()=>{
+    const month = document.getElementById('monthSelectPie').value;
+    if(!month){ alert('Selecteer maand'); return; }
+    const arr = computed.byMonth[month] || [];
+    const counts = {A:0,B:0,C:0};
+    arr.forEach(x=>{ const k = x.ABC || '-'; if(k==='A'||k==='B'||k==='C') counts[k]++; });
+    const data = [counts.A, counts.B, counts.C];
+    if(pieChart) pieChart.destroy();
+    const ctx = document.getElementById('pieCanvas').getContext('2d');
+    pieChart = new Chart(ctx, {
+      type: 'pie',
+      data: {
+        labels: ['A','B','C'],
+        datasets: [{ data: data, backgroundColor: ['#2ecc71','#f39c12','#e74c3c'] }]
+      },
+      options: {
+        plugins: { title: { display:true, text: `Verdeling ABC — ${month}` } }
+      }
     });
   });
-  const lastMonth = months.length? months[months.length-1]: null;
-  Object.keys(aggregated).forEach(sku=>{
-    const prod = aggregated[sku];
-    prod.history = months.map(m=> prod.historyMap[m] ? prod.historyMap[m] : '-');
-    const scores = prod.history.filter(c=> c==='A'||c==='B'||c==='C').map(c=> abcScore(c));
-    prod.avgScore = scores.length? (scores.reduce((a,b)=>a+b,0)/scores.length).toFixed(2) : '';
-    if(lastMonth){
-      const found = (computed.byMonth[lastMonth]||[]).find(x=>x.sku===sku);
-      prod.latest_end = found? found.end_inv: 0;
-      prod.in_stock = prod.latest_end>0;
-    } else {
-      prod.latest_end = 0; prod.in_stock=false;
-    }
-    const price = PRICE_BY_CATEGORY[prod.type] || 0;
-    prod.totalRevenue = prod.totalSold * price;
-  });
-}
 
-// --- UI helpers & tables ---
-function refreshMonthSelects(){
-  const sel = document.getElementById('monthSelectPie'); sel.innerHTML='';
-  Object.keys(monthsData).sort().forEach(m=>{
-    const opt = document.createElement('option');
-    opt.value=m; opt.text = m; sel.appendChild(opt);
-  });
-}
+  document.getElementById('drawTrend').addEventListener('click', ()=>{
+    const mode = document.getElementById('trendMode').value;
+    const months = Object.keys(computed.byMonth).sort();
+    if(months.length === 0){ alert('Geen data'); return; }
+    const series = {A:[],B:[],C:[]};
+    months.forEach(m=>{
+      const arr = computed.byMonth[m] || [];
+      if(mode === 'count'){
+        const total = arr.length || 1;
+        series.A.push((arr.filter(x=>x.ABC==='A').length/total) * 100);
+        series.B.push((arr.filter(x=>x.ABC==='B').length/total) * 100);
+        series.C.push((arr.filter(x=>x.ABC==='C').length/total) * 100);
+      } else {
+        // revenue mode
+        const revTotal = arr.reduce((s,x)=> s + ((PRICE_BY_CATEGORY[x.category] || 0) * x.sold), 0) || 1;
+        const revA = arr.filter(x=>x.ABC==='A').reduce((s,x)=> s + ((PRICE_BY_CATEGORY[x.category] || 0) * x.sold), 0);
+        const revB = arr.filter(x=>x.ABC==='B').reduce((s,x)=> s + ((PRICE_BY_CATEGORY[x.category] || 0) * x.sold), 0);
+        const revC = arr.filter(x=>x.ABC==='C').reduce((s,x)=> s + ((PRICE_BY_CATEGORY[x.category] || 0) * x.sold), 0);
+        series.A.push((revA / revTotal) * 100);
+        series.B.push((revB / revTotal) * 100);
+        series.C.push((revC / revTotal) * 100);
+      }
+    });
 
-function updateFilters(){
-  const skuSel = document.getElementById('skuFilter'); skuSel.innerHTML = '<option value="all">Alle</option>';
-  Object.values(aggregated).forEach(p=>{
-    const opt = document.createElement('option');
-    opt.value=p.sku; opt.text = `${p.name} (${p.sku})`; skuSel.appendChild(opt);
-  });
-  rebuildTables();
-}
-
-document.getElementById('applyFilters').addEventListener('click', ()=>rebuildTables());
-document.getElementById('resetFilters').addEventListener('click', ()=>{
-  document.getElementById('skuFilter').value='all';
-  document.getElementById('typeFilter').value='all';
-  document.getElementById('abcFilter').value='all';
-  document.getElementById('stockFilter').value='all';
-  rebuildTables();
-});
-
-function rebuildTables(){
-  rebuildAggregatedTable();
-  rebuildProductsTable();
-  if(topTable) topTable.clear().draw();
-  if(analysisTable) analysisTable.clear().draw();
-}
-
-function rebuildAggregatedTable(){
-  if($.fn.dataTable.isDataTable('#aggregatedTable')){
-    aggregatedTable.destroy();
-    $('#aggregatedTable tbody').empty();
-  }
-  const skuFilter = document.getElementById('skuFilter').value;
-  const typeFilter = document.getElementById('typeFilter').value;
-  const abcFilter = document.getElementById('abcFilter').value;
-  const stockFilter = document.getElementById('stockFilter').value;
-
-  Object.values(aggregated).forEach(p=>{
-    if(skuFilter!=='all' && p.sku !== skuFilter) return;
-    if(typeFilter!=='all' && p.type !== typeFilter) return;
-    if(abcFilter!=='all'){
-      const latest = p.history.length? p.history[p.history.length-1] : '-';
-      if(!p.history.includes(abcFilter) && latest!==abcFilter) return;
-    }
-    if(stockFilter==='in' && !p.in_stock) return;
-    if(stockFilter==='out' && p.in_stock) return;
-    const inStockText = p.in_stock? '<span class="status-yes">Ja</span>' : '<span class="status-no">Nee</span>';
-    $('#aggregatedTable tbody').append(`
-      <tr>
-        <td>${p.name}</td>
-        <td>${p.sku}</td>
-        <td>${p.type}</td>
-        <td>${p.history.join(', ')}</td>
-        <td>${p.avgScore}</td>
-        <td>${p.totalSold}</td>
-        <td>${p.latest_end}</td>
-        <td>${inStockText}</td>
-      </tr>`);
-  });
-  aggregatedTable = $('#aggregatedTable').DataTable({order:[[0,'asc']]});
-}
-
-function rebuildProductsTable(){
-  if($.fn.dataTable.isDataTable('#productsTable')){
-    productsTable.destroy();
-    $('#productsTable tbody').empty();
-  }
-  Object.keys(computed.byMonth).sort().forEach(m=>{
-    computed.byMonth[m].forEach(item=>{
-      $('#productsTable tbody').append(`<tr>
-        <td>${item.product_title}</td>
-        <td>${item.sku}</td>
-        <td>${item.category}</td>
-        <td>${m}</td>
-        <td>${item.start_inv}</td>
-        <td>${item.end_inv}</td>
-        <td>${item.sold}</td>
-        <td>${item.ABC}</td>
-      </tr>`);
+    if(trendChart) trendChart.destroy();
+    const ctx = document.getElementById('trendCanvas').getContext('2d');
+    trendChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: months,
+        datasets: [
+          { label:'A %', data: series.A, borderColor:'#2ecc71', tension:0.3, fill:false },
+          { label:'B %', data: series.B, borderColor:'#f39c12', tension:0.3, fill:false },
+          { label:'C %', data: series.C, borderColor:'#e74c3c', tension:0.3, fill:false }
+        ]
+      },
+      options: {
+        plugins: { title: { display:true, text: `Trend ABC % over tijd (${mode})` } },
+        interaction: { mode: 'index', intersect: false },
+        scales: { y: { beginAtZero:true } }
+      }
     });
   });
-  productsTable = $('#productsTable').DataTable({order:[[0,'asc']]});
-}
 
-// --- rest van je oorspronkelijke code blijft ongewijzigd ---
-$(document).ready(()=>{
-  aggregatedTable = $('#aggregatedTable').DataTable();
-  productsTable = $('#productsTable').DataTable();
-  topTable = $('#topTable').DataTable();
-  analysisTable = $('#analysisTable').DataTable();
-});
-</script>
+  // --- Export helpers ---
+  document.getElementById('exportAggregated').addEventListener('click', ()=>{
+    // CSV with columns: name,sku,type,history,avgScore,totalSold,latest_end,in_stock,monthsInStock
+    const rows = Object.values(aggregated).map(p=>({
+      name: p.name,
+      sku: p.sku,
+      type: p.type,
+      history: p.history.join('|'),
+      avgScore: p.avgScore ? p.avgScore.toFixed(2) : '',
+      totalSold: p.totalSold,
+      latest_end: p.latest_end,
+      in_stock: p.in_stock ? 'Ja' : 'Nee',
+      monthsInStock: p.monthsInStock
+    }));
+    downloadCSV(rows, 'aggregated_export.csv');
+  });
+
+  document.getElementById('exportRank').addEventListener('click', ()=>{
+    const rows = computeRankRows();
+    downloadCSV(rows, 'rank_export.csv');
+  });
+
+  document.getElementById('logData').addEventListener('click', ()=>{ console.log({ monthsData, computed, aggregated }); alert('Intern geheugen gelogd in console.'); });
+
+  function downloadCSV(arr, filename){
+    if(!arr || !arr.length){ alert('Geen data om te exporteren'); return; }
+    const keys = Object.keys(arr[0]);
+    const lines = [keys.join(',')].concat(arr.map(r => keys.map(k => `"${String(r[k]||'').replace(/"/g,'""')}"`).join(',')));
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = filename; a.style.display = 'none';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  }
+
+  // expose to window for debug (optional)
+  window._monthsData = monthsData; window._computed = computed; window._aggregated = aggregated;
+
+  </script>
+</body>
+</html>
