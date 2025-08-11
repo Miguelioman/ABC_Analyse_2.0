@@ -10,52 +10,54 @@
   table { border-collapse: collapse; width: 100%; margin-top: 20px; }
   th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
   th { background-color: #f2f2f2; cursor: pointer; }
-  .controls { margin: 20px 0; display: flex; gap: 10px; }
-  .abc-A { background-color: #90ee90; }
-  .abc-B { background-color: #ffcc80; }
-  .abc-C { background-color: #ff9999; }
-  canvas { max-width: 50%; height: auto; }
+  .controls { margin: 20px 0; display:flex; gap:10px; flex-wrap:wrap; }
+  canvas { max-width: 25%; }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 <h1>ABC Analyse Dashboard</h1>
 <div class="controls">
   <input type="file" id="fileInput" accept=".csv" multiple>
-  <label for="monthSelect">Kies maand:</label>
-  <select id="monthSelect"></select>
-  <label for="skuFilter">Product filter:</label>
-  <select id="skuFilter"></select>
-  <label for="abcFilter">Categorie filter:</label>
-  <select id="abcFilter">
-    <option value="">Alle</option>
-    <option value="A">A</option>
-    <option value="B">B</option>
-    <option value="C">C</option>
-  </select>
+  <label for="productFilter">Product (SKU):</label>
+  <select id="productFilter"></select>
+  <label for="typeFilter">Type:</label>
+  <select id="typeFilter"><option value="">Alle</option><option value="sokken">Sokken</option><option value="compressiesokken">Compressiesokken</option><option value="klompen">Klompen</option><option value="mokken">Mokken</option><option value="sneakers">Sneakers</option></select>
+  <label for="abcFilter">ABC:</label>
+  <select id="abcFilter"><option value="">Alle</option><option value="A">A</option><option value="B">B</option><option value="C">C</option></select>
 </div>
-<div id="summary"></div>
-<canvas id="pieChart"></canvas>
-<canvas id="trendChart"></canvas>
 <table id="dataTable">
   <thead>
     <tr>
       <th>Product</th>
       <th>SKU</th>
-      <th>ABC historie</th>
-      <th>Gemiddelde score</th>
+      <th>Type</th>
+      <th>Historie</th>
+      <th>Gemiddelde</th>
       <th>Totaal verkocht</th>
     </tr>
   </thead>
   <tbody></tbody>
 </table>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<canvas id="pieChart"></canvas>
+<canvas id="trendChart"></canvas>
 <script>
 let monthlyData = {};
-let skuHistory = {};
+let aggregatedData = {};
+
+const typeMap = title => {
+  title = title.toLowerCase();
+  if(title.includes('compressie')) return 'compressiesokken';
+  if(title.includes('sok')) return 'sokken';
+  if(title.includes('klomp')) return 'klompen';
+  if(title.includes('mok')) return 'mokken';
+  if(title.includes('sneaker')) return 'sneakers';
+  return 'overig';
+};
 
 document.getElementById('fileInput').addEventListener('change', handleFiles);
-document.getElementById('monthSelect').addEventListener('change', renderTable);
-document.getElementById('skuFilter').addEventListener('change', renderTable);
+document.getElementById('productFilter').addEventListener('change', renderTable);
+document.getElementById('typeFilter').addEventListener('change', renderTable);
 document.getElementById('abcFilter').addEventListener('change', renderTable);
 
 function handleFiles(evt) {
@@ -75,13 +77,13 @@ function processCSV(filename, csvText) {
   const headers = lines[0].split(',').map(h => h.replace(/\"/g, '').trim());
   const month = filename.match(/\d{4}-\d{2}/) ? filename.match(/\d{4}-\d{2}/)[0] : filename;
   const data = [];
-
   for (let i = 1; i < lines.length; i++) {
     const row = lines[i].split(',').map(v => v.replace(/\"/g, '').trim());
     const obj = {};
     headers.forEach((h, idx) => obj[h] = row[idx]);
     const startUnits = parseInt(obj['Starting inventory units'] || '0');
     if (startUnits > 0) {
+      obj['Product type'] = typeMap(obj['Product title'] || '');
       obj['Starting inventory units'] = startUnits;
       obj['Ending inventory units'] = parseInt(obj['Ending inventory units'] || '0');
       obj['Inventory units sold'] = parseInt(obj['Inventory units sold'] || '0');
@@ -89,9 +91,8 @@ function processCSV(filename, csvText) {
     }
   }
   monthlyData[month] = calculateABC(data);
-  updateSKUHistory(month);
-  updateMonthSelect();
-  updateSKUFilter();
+  aggregateProducts();
+  updateProductFilter();
   renderCharts();
 }
 
@@ -109,96 +110,70 @@ function calculateABC(data) {
   return data;
 }
 
-function updateSKUHistory(month) {
-  for (let item of monthlyData[month]) {
-    const sku = item['Product variant SKU'];
-    if (!skuHistory[sku]) {
-      skuHistory[sku] = { name: item['Product title'], history: [], totalSold: 0 };
-    }
-    skuHistory[sku].history.push(item.ABC);
-    skuHistory[sku].totalSold += item['Inventory units sold'];
+function aggregateProducts() {
+  aggregatedData = {};
+  for (let month in monthlyData) {
+    monthlyData[month].forEach(item => {
+      const sku = item['Product variant SKU'];
+      if (!aggregatedData[sku]) {
+        aggregatedData[sku] = { name: item['Product title'], sku: sku, type: item['Product type'], history: [], totalSold: 0 };
+      }
+      aggregatedData[sku].history.push(item.ABC);
+      aggregatedData[sku].totalSold += item['Inventory units sold'];
+    });
+  }
+  for (let sku in aggregatedData) {
+    aggregatedData[sku].avgScore = (aggregatedData[sku].history.reduce((sum, c) => sum + (c === 'A' ? 1 : c === 'B' ? 2 : 3), 0) / aggregatedData[sku].history.length).toFixed(2);
   }
 }
 
-function updateMonthSelect() {
-  const select = document.getElementById('monthSelect');
-  select.innerHTML = '';
-  Object.keys(monthlyData).sort().forEach(month => {
+function updateProductFilter() {
+  const select = document.getElementById('productFilter');
+  select.innerHTML = '<option value="">Alle</option>';
+  Object.values(aggregatedData).forEach(prod => {
     const opt = document.createElement('option');
-    opt.value = month;
-    opt.textContent = month;
+    opt.value = prod.sku;
+    opt.textContent = prod.name;
     select.appendChild(opt);
   });
-}
-
-function updateSKUFilter() {
-  const select = document.getElementById('skuFilter');
-  select.innerHTML = '<option value="">Alle producten</option>';
-  Object.keys(skuHistory).forEach(sku => {
-    const opt = document.createElement('option');
-    opt.value = sku;
-    opt.textContent = skuHistory[sku].name + ' (' + sku + ')';
-    select.appendChild(opt);
-  });
+  renderTable();
 }
 
 function renderTable() {
+  const productFilter = document.getElementById('productFilter').value;
+  const typeFilter = document.getElementById('typeFilter').value;
+  const abcFilter = document.getElementById('abcFilter').value;
   const tbody = document.getElementById('dataTable').querySelector('tbody');
   tbody.innerHTML = '';
-  const skuFilter = document.getElementById('skuFilter').value;
-  const abcFilter = document.getElementById('abcFilter').value;
-
-  Object.entries(skuHistory).forEach(([sku, data]) => {
-    if (skuFilter && sku !== skuFilter) return;
-    if (abcFilter && !data.history.includes(abcFilter)) return;
-    const avgScore = (data.history.reduce((sum, val) => sum + (val === 'A' ? 1 : val === 'B' ? 2 : 3), 0) / data.history.length).toFixed(2);
+  for (let prod of Object.values(aggregatedData)) {
+    if ((productFilter && prod.sku !== productFilter) || (typeFilter && prod.type !== typeFilter) || (abcFilter && !prod.history.includes(abcFilter))) continue;
     const tr = document.createElement('tr');
-    tr.className = 'abc-' + data.history[data.history.length - 1];
-    tr.innerHTML = `
-      <td>${data.name}</td>
-      <td>${sku}</td>
-      <td>${data.history.join(', ')}</td>
-      <td>${avgScore}</td>
-      <td>${data.totalSold}</td>
-    `;
+    tr.innerHTML = `<td>${prod.name}</td><td>${prod.sku}</td><td>${prod.type}</td><td>${prod.history.join(', ')}</td><td>${prod.avgScore}</td><td>${prod.totalSold}</td>`;
     tbody.appendChild(tr);
-  });
+  }
 }
 
 function renderCharts() {
-  const month = document.getElementById('monthSelect').value || Object.keys(monthlyData)[0];
-  if (!month) return;
-  const counts = {A:0,B:0,C:0};
-  monthlyData[month].forEach(item => counts[item.ABC]++);
-
-  const pieCtx = document.getElementById('pieChart').getContext('2d');
-  new Chart(pieCtx, {
+  const abcCounts = {A: 0, B: 0, C: 0};
+  for (let month in monthlyData) {
+    monthlyData[month].forEach(item => abcCounts[item.ABC]++);
+  }
+  new Chart(document.getElementById('pieChart'), {
     type: 'pie',
-    data: {
-      labels: ['A', 'B', 'C'],
-      datasets: [{
-        data: [counts.A, counts.B, counts.C],
-        backgroundColor: ['green', 'orange', 'red']
-      }]
-    }
+    data: { labels: ['A', 'B', 'C'], datasets: [{ data: [abcCounts.A, abcCounts.B, abcCounts.C], backgroundColor: ['green', 'orange', 'red'] }] }
   });
-
-  const trendCtx = document.getElementById('trendChart').getContext('2d');
   const months = Object.keys(monthlyData).sort();
-  const aData = months.map(m => monthlyData[m].filter(i => i.ABC === 'A').length);
-  const bData = months.map(m => monthlyData[m].filter(i => i.ABC === 'B').length);
-  const cData = months.map(m => monthlyData[m].filter(i => i.ABC === 'C').length);
-
-  new Chart(trendCtx, {
+  const trendData = {A: [], B: [], C: []};
+  months.forEach(month => {
+    const counts = {A: 0, B: 0, C: 0};
+    monthlyData[month].forEach(item => counts[item.ABC]++);
+    trendData.A.push(counts.A);
+    trendData.B.push(counts.B);
+    trendData.C.push(counts.C);
+  });
+  new Chart(document.getElementById('trendChart'), {
     type: 'line',
-    data: {
-      labels: months,
-      datasets: [
-        { label: 'A', data: aData, borderColor: 'green', fill: false },
-        { label: 'B', data: bData, borderColor: 'orange', fill: false },
-        { label: 'C', data: cData, borderColor: 'red', fill: false }
-      ]
-    }
+    data: { labels: months, datasets: [ { label: 'A', data: trendData.A, borderColor: 'green', fill: false }, { label: 'B', data: trendData.B, borderColor: 'orange', fill: false }, { label: 'C', data: trendData.C, borderColor: 'red', fill: false } ] }
   });
 }
 </script>
