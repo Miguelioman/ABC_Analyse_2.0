@@ -93,12 +93,12 @@ th { cursor: pointer; background: #eee; }
 let allData = {};
 let months = [];
 
-// Klik op knop opent file input
+// Knop opent file input
 document.getElementById("uploadBtn").addEventListener("click", () => {
   document.getElementById("excelFile").click();
 });
 
-// Verwerk Excelbestand
+// File upload verwerken
 document.getElementById("excelFile").addEventListener("change", handleExcelUpload);
 
 function handleExcelUpload(evt) {
@@ -138,14 +138,18 @@ function normalizeType(type) {
              .replace(/(^|\s)\S/g, l => l.toUpperCase());
 }
 
+// Past kolomnamen aan naar interne standaard
 function processMonthData(data) {
-  data.forEach(row => { row.Producttype = normalizeType(row.Producttype); });
+  data.forEach(row => {
+    row.Producttype = normalizeType(row["Product type"]);
+    row.Verkocht = Number(row["Inventory units sold"]) || 0;
+  });
   const sorted = [...data].sort((a,b) => b.Verkocht - a.Verkocht);
   let total = sorted.reduce((sum,r) => sum + r.Verkocht, 0);
   let cum = 0;
   sorted.forEach(r => {
     cum += r.Verkocht;
-    let pct = cum / total * 100;
+    let pct = total > 0 ? cum / total * 100 : 0;
     r.Categorie = pct <= 80 ? 'A' : pct <= 95 ? 'B' : 'C';
   });
   return sorted;
