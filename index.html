@@ -6,24 +6,20 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
-body { font-family: Arial, sans-serif; margin: 20px; }
-.hidden { display: none; }
-h2 { margin-top: 30px; }
-table { border-collapse: collapse; width: 100%; margin-top: 10px; }
-th, td { border: 1px solid #ccc; padding: 6px; text-align: left; cursor: default; }
-th { background: #eee; cursor: pointer; }
-.filter-container { margin-top: 10px; }
-#monthsOverview { margin-top: 10px; font-weight: bold; }
-.chart-container { width: 600px; margin-top: 20px; }
-#uploadBtn {
-  background-color: #007bff;
-  color: white;
-  padding: 8px 16px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-}
-#uploadBtn:hover { background-color: #0056b3; }
+  body { font-family: Arial, sans-serif; margin: 20px; }
+  .hidden { display: none; }
+  h2 { margin-top: 30px; }
+  table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+  th, td { border: 1px solid #ccc; padding: 6px; text-align: left; }
+  th { background: #eee; cursor: pointer; }
+  .filter-container { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  #monthsOverview { margin-top: 10px; font-weight: bold; }
+  .chart-container { width: 600px; max-width: 100%; margin-top: 20px; }
+  #uploadBtn {
+    background-color: #007bff; color: white; padding: 8px 16px;
+    border: none; border-radius: 4px; cursor: pointer;
+  }
+  #uploadBtn:hover { background-color: #0056b3; }
 </style>
 </head>
 <body>
@@ -39,8 +35,10 @@ th { background: #eee; cursor: pointer; }
 <div id="mainContent" class="hidden">
   <h2>Hoofdoverzicht</h2>
   <div class="filter-container">
-    <label>Filter producttype: <select id="filterType"><option value="">Alle</option></select></label>
-    <label>Filter categorie: 
+    <label>Filter producttype:
+      <select id="filterType"><option value="">Alle</option></select>
+    </label>
+    <label>Filter categorie (laatste maand):
       <select id="filterCat">
         <option value="">Alle</option>
         <option value="A">A</option>
@@ -48,37 +46,43 @@ th { background: #eee; cursor: pointer; }
         <option value="C">C</option>
       </select>
     </label>
-    <label>Op voorraad: 
+    <label>Op voorraad (laatste maand):
       <select id="filterStock">
         <option value="">Alle</option>
         <option value="ja">Ja</option>
         <option value="nee">Nee</option>
       </select>
     </label>
-    <label>Zoek: <input type="text" id="searchInput"></label>
+    <label>Zoek: <input type="text" id="searchInput" placeholder="Zoek op productnaam"></label>
   </div>
   <table id="mainTable"></table>
 
   <h2>Top/Bottom verkopers (instelbaar)</h2>
-  <label>Aantal: <input type="number" id="topCount" value="10" min="1"></label>
-  <label>Weergave: 
-    <select id="topBottomSelect">
-      <option value="top">Top</option>
-      <option value="bottom">Bottom</option>
-    </select>
-  </label>
-  <label>Filter producttype: <select id="filterTypeTop"><option value="">Alle</option></select></label>
-  <label>Op voorraad: 
-    <select id="filterStockTop">
-      <option value="">Alle</option>
-      <option value="ja">Ja</option>
-      <option value="nee">Nee</option>
-    </select>
-  </label>
+  <div class="filter-container">
+    <label>Aantal: <input type="number" id="topCount" value="10" min="1" style="width:80px"></label>
+    <label>Weergave:
+      <select id="topBottomSelect">
+        <option value="top">Top</option>
+        <option value="bottom">Bottom</option>
+      </select>
+    </label>
+    <label>Filter producttype:
+      <select id="filterTypeTop"><option value="">Alle</option></select>
+    </label>
+    <label>Op voorraad (laatste maand):
+      <select id="filterStockTop">
+        <option value="">Alle</option>
+        <option value="ja">Ja</option>
+        <option value="nee">Nee</option>
+      </select>
+    </label>
+  </div>
   <table id="topBottomTable"></table>
 
   <h2>Charts</h2>
-  <label>Filter producttype: <select id="filterTypeChart"><option value="">Alle</option></select></label>
+  <label>Filter producttype:
+    <select id="filterTypeChart"><option value="">Alle</option></select>
+  </label>
   <div class="chart-container">
     <canvas id="pieChart"></canvas>
   </div>
@@ -88,188 +92,257 @@ th { background: #eee; cursor: pointer; }
 </div>
 
 <script>
-let allData = {};
-let months = [];
-let productHistory = {};
+let allData = {};           // { '02-2025': [rows], ... }  (met Categorie per maand)
+let months = [];            // ['02-2025', '03-2025', ...] (oplopend)
+let productHistory = {};    // per product: { type, stock, cats[per maand], avgScore, soldLast, catLast }
+let charts = { pie: null, trend: null };
 
-// Upload knop
+// === Upload-knop ===
 document.getElementById("uploadBtn").addEventListener("click", () => {
   document.getElementById("excelFile").click();
 });
-
 document.getElementById("excelFile").addEventListener("change", handleExcelUpload);
 
+// === Inlezen Excel ===
 function handleExcelUpload(evt) {
   const file = evt.target.files[0];
   if (!file) return;
   const reader = new FileReader();
   reader.onload = e => {
-    const workbook = XLSX.read(e.target.result, {type: 'binary'});
+    const workbook = XLSX.read(e.target.result, { type: 'binary' });
     months = [];
     allData = {};
     productHistory = {};
+
     workbook.SheetNames.forEach(sheetName => {
-      const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
-      if (sheetData.length > 0) {
-        const month = sheetName.trim();
-        months.push(month);
-        allData[month] = processMonthData(sheetData);
+      const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+      if (rows.length) {
+        const m = sheetName.trim();
+        months.push(m);
+        allData[m] = processMonthData(rows); // voegt Categorie toe
       }
     });
+
+    // sorteer maanden oplopend (02-2025, 03-2025, ...)
     months.sort((a,b) => {
       const [ma, ya] = a.split('-').map(Number);
       const [mb, yb] = b.split('-').map(Number);
-      return yb === ya ? ma - mb : ya - yb;
+      return ya === yb ? ma - mb : ya - yb;
     });
-    // Bouw productHistory voor beloop en score
-    buildProductHistory();
-    document.getElementById("monthsOverview").textContent = "📅 Geïmporteerde maanden: " + months.join(', ');
+
+    buildProductHistory(); // maakt beloop & score, en velden van laatste maand
+    document.getElementById("monthsOverview").textContent =
+      "📅 Geïmporteerde maanden: " + months.join(', ');
     document.getElementById("mainContent").classList.remove("hidden");
+
+    fillProductTypeFilters();
     buildMainTable();
     buildTopBottomTable();
     buildCharts();
-    fillProductTypeFilters();
   };
   reader.readAsBinaryString(file);
 }
 
+// === Helpers & verwerking ===
 function normalizeType(type) {
   if (!type) return '';
-  return type.trim().toLowerCase().replace(/\s+/g, ' ')
+  return type.toString().trim().toLowerCase().replace(/\s+/g, ' ')
              .replace(/(^|\s)\S/g, l => l.toUpperCase());
 }
 
+// Voeg velden toe en bereken ABC per *sheet* op basis van verkoopaantallen.
 function processMonthData(data) {
   data.forEach(row => {
     row.Producttype = normalizeType(row["Product type"]);
-    row.Verkocht = Number(row["Inventory units sold"]) || 0;
-    const voorraad = Number(row["Ending inventory units"]) || 0;
-    row.OpVoorraad = voorraad > 0 ? "ja" : "nee";
+    row.Verkocht    = Number(row["Inventory units sold"]) || 0;
+    const voorraad  = Number(row["Ending inventory units"]) || 0;
+    row.OpVoorraad  = voorraad > 0 ? "ja" : "nee";
   });
+
+  // Sorteer per sheet op verkocht en bereken cumulatief voor ABC
   const sorted = [...data].sort((a,b) => b.Verkocht - a.Verkocht);
-  let total = sorted.reduce((sum,r) => sum + r.Verkocht, 0);
+  const total = sorted.reduce((s,r) => s + r.Verkocht, 0);
   let cum = 0;
   sorted.forEach(r => {
     cum += r.Verkocht;
-    let pct = total > 0 ? cum / total * 100 : 0;
+    const pct = total > 0 ? (cum / total) * 100 : 0;
     r.Categorie = pct <= 80 ? 'A' : pct <= 95 ? 'B' : 'C';
   });
   return sorted;
 }
 
+// Bouw per product het beloop (A/B/C per maand in *dezelfde volgorde als months*)
 function buildProductHistory() {
-  months.forEach(month => {
-    allData[month].forEach(r => {
-      const key = r["Product title"];
-      if (!productHistory[key]) {
-        productHistory[key] = { type: r.Producttype, stock: r.OpVoorraad, cats: [] };
-      }
-      productHistory[key].cats.push(r.Categorie);
+  // Index per maand op producttitel
+  const indexByMonth = {};
+  const allTitles = new Set();
+  months.forEach(m => {
+    const map = {};
+    allData[m].forEach(r => { map[r["Product title"]] = r; allTitles.add(r["Product title"]); });
+    indexByMonth[m] = map;
+  });
+
+  const lastMonth = months[months.length - 1];
+  productHistory = {};
+
+  allTitles.forEach(title => {
+    const cats = months.map(m => {
+      const row = indexByMonth[m][title];
+      return row ? row.Categorie : '-'; // '-' wanneer product die maand niet voorkomt
     });
+
+    // Gemiddelde score over aanwezige maanden (A=1, B=2, C=3)
+    const scores = cats
+      .filter(c => c === 'A' || c === 'B' || c === 'C')
+      .map(c => c === 'A' ? 1 : (c === 'B' ? 2 : 3));
+    const avg = scores.length ? (scores.reduce((a,b)=>a+b,0) / scores.length) : null;
+
+    // Velden laatste maand (als niet aanwezig: lege / 0)
+    const lastRow = indexByMonth[lastMonth][title];
+    let type = '';
+    if (lastRow) {
+      type = lastRow.Producttype;
+    } else {
+      // fallback: dichtstbijzijnde vorige maand met data
+      for (let i = months.length - 1; i >= 0; i--) {
+        const r = indexByMonth[months[i]][title];
+        if (r) { type = r.Producttype; break; }
+      }
+    }
+
+    productHistory[title] = {
+      type,
+      stock: lastRow ? lastRow.OpVoorraad : '',
+      soldLast: lastRow ? lastRow.Verkocht : 0,
+      catLast: cats[cats.length - 1],
+      cats,
+      avgScore: avg
+    };
   });
 }
 
+// === Tabel Hoofdoverzicht ===
 function buildMainTable() {
   const table = document.getElementById("mainTable");
-  const filterType = document.getElementById("filterType").value;
-  const filterCat = document.getElementById("filterCat").value;
-  const filterStock = document.getElementById("filterStock").value;
-  const search = document.getElementById("searchInput").value.toLowerCase();
+  const filterType  = document.getElementById("filterType").value;
+  const filterCat   = document.getElementById("filterCat").value;   // laatste maand
+  const filterStock = document.getElementById("filterStock").value; // laatste maand
+  const q = document.getElementById("searchInput").value.toLowerCase();
 
-  let rows = Object.values(allData).flat();
-  let unique = {};
-  rows.forEach(r => { unique[r["Product title"]] = r; });
-  rows = Object.values(unique);
+  let rows = Object.keys(productHistory).map(title => ({
+    title,
+    type: productHistory[title].type,
+    catLast: productHistory[title].catLast,
+    beloop: productHistory[title].cats.join(''),
+    avgScore: productHistory[title].avgScore != null ? productHistory[title].avgScore.toFixed(2) : '',
+    stock: productHistory[title].stock,
+    soldLast: productHistory[title].soldLast
+  }));
 
-  if (filterType) rows = rows.filter(r => r.Producttype === filterType);
-  if (filterCat) rows = rows.filter(r => productHistory[r["Product title"]]?.cats.includes(filterCat));
-  if (filterStock) rows = rows.filter(r => r.OpVoorraad === filterStock);
-  if (search) rows = rows.filter(r => (r["Product title"] || "").toLowerCase().includes(search));
+  if (filterType)  rows = rows.filter(r => r.type === filterType);
+  if (filterCat)   rows = rows.filter(r => r.catLast === filterCat);
+  if (filterStock) rows = rows.filter(r => r.stock === filterStock);
+  if (q)           rows = rows.filter(r => r.title.toLowerCase().includes(q));
 
-  let html = "<tr>" +
-    "<th>Product</th><th>Type</th><th>Categorie (laatste maand)</th>" +
-    "<th>Beloop</th><th>Gem. Score</th><th>Op voorraad</th><th>Verkocht (laatste maand)</th>" +
-    "</tr>";
-
+  let html = `
+    <tr>
+      <th>Product</th>
+      <th>Type</th>
+      <th>Categorie (laatste maand)</th>
+      <th>Beloop (${months.length} mnd)</th>
+      <th>Gem. Score</th>
+      <th>Op voorraad (laatste)</th>
+      <th>Verkocht (laatste)</th>
+    </tr>`;
   rows.forEach(r => {
-    const hist = productHistory[r["Product title"]];
-    const beloop = hist.cats.join('');
-    const score = (hist.cats.reduce((a,c) => a + (c==='A'?1:c==='B'?2:3),0) / hist.cats.length).toFixed(2);
     html += `<tr>
-      <td>${r["Product title"]}</td>
-      <td>${r.Producttype}</td>
-      <td>${r.Categorie}</td>
-      <td>${beloop}</td>
-      <td>${score}</td>
-      <td>${r.OpVoorraad}</td>
-      <td>${r.Verkocht}</td>
+      <td>${r.title}</td>
+      <td>${r.type}</td>
+      <td>${r.catLast}</td>
+      <td>${r.beloop}</td>
+      <td>${r.avgScore}</td>
+      <td>${r.stock}</td>
+      <td>${r.soldLast}</td>
     </tr>`;
   });
   table.innerHTML = html;
   makeTableSortable(table);
 }
 
+// === Tabel Top/Bottom ===
+// Gebaseerd op verkoopaantal in de *laatste maand*
 function buildTopBottomTable() {
   const table = document.getElementById("topBottomTable");
-  const count = parseInt(document.getElementById("topCount").value) || 10;
-  const mode = document.getElementById("topBottomSelect").value;
-  const filterType = document.getElementById("filterTypeTop").value;
+  const count       = parseInt(document.getElementById("topCount").value) || 10;
+  const mode        = document.getElementById("topBottomSelect").value;
+  const filterType  = document.getElementById("filterTypeTop").value;
   const filterStock = document.getElementById("filterStockTop").value;
 
-  let rows = Object.values(allData).flat();
-  if (filterType) rows = rows.filter(r => r.Producttype === filterType);
-  if (filterStock) rows = rows.filter(r => r.OpVoorraad === filterStock);
+  let rows = Object.keys(productHistory).map(title => ({
+    title,
+    type: productHistory[title].type,
+    beloop: productHistory[title].cats.join(''),
+    avgScore: productHistory[title].avgScore != null ? productHistory[title].avgScore.toFixed(2) : '',
+    soldLast: productHistory[title].soldLast,
+    stock: productHistory[title].stock
+  }));
 
-  rows.sort((a,b) => mode === "top" ? b.Verkocht - a.Verkocht : a.Verkocht - b.Verkocht);
+  if (filterType)  rows = rows.filter(r => r.type === filterType);
+  if (filterStock) rows = rows.filter(r => r.stock === filterStock);
+
+  rows.sort((a,b) => mode === "top" ? b.soldLast - a.soldLast : a.soldLast - b.soldLast);
   rows = rows.slice(0, count);
 
-  let html = "<tr><th>Product</th><th>Type</th><th>Beloop</th><th>Gem. Score</th><th>Verkocht</th></tr>";
+  let html = `
+    <tr>
+      <th>Product</th>
+      <th>Type</th>
+      <th>Beloop (${months.length} mnd)</th>
+      <th>Gem. Score</th>
+      <th>Verkocht (laatste)</th>
+    </tr>`;
   rows.forEach(r => {
-    const hist = productHistory[r["Product title"]] || { cats: [] };
-    const beloop = hist.cats.join('');
-    const score = hist.cats.length > 0 ? 
-      (hist.cats.reduce((a,c) => a + (c==='A'?1:c==='B'?2:3),0) / hist.cats.length).toFixed(2) : '';
     html += `<tr>
-      <td>${r["Product title"]}</td>
-      <td>${r.Producttype}</td>
-      <td>${beloop}</td>
-      <td>${score}</td>
-      <td>${r.Verkocht}</td>
+      <td>${r.title}</td>
+      <td>${r.type}</td>
+      <td>${r.beloop}</td>
+      <td>${r.avgScore}</td>
+      <td>${r.soldLast}</td>
     </tr>`;
   });
   table.innerHTML = html;
   makeTableSortable(table);
 }
 
+// === Grafieken ===
 function buildCharts() {
-  const ctxPie = document.getElementById("pieChart").getContext("2d");
-  const ctxTrend = document.getElementById("trendChart").getContext("2d");
   const filterType = document.getElementById("filterTypeChart").value;
 
-  let rows = Object.values(allData).flat();
-  if (filterType) rows = rows.filter(r => r.Producttype === filterType);
+  // ABC verdeling (laatste maand, optioneel gefilterd op type)
+  const lastMonth = months[months.length - 1];
+  const rowsLast = filterType
+    ? allData[lastMonth].filter(r => r.Producttype === filterType)
+    : allData[lastMonth];
 
   const catCount = {A:0, B:0, C:0};
-  rows.forEach(r => { catCount[r.Categorie]++; });
+  rowsLast.forEach(r => { catCount[r.Categorie]++; });
 
-  new Chart(ctxPie, {
+  if (charts.pie) charts.pie.destroy();
+  charts.pie = new Chart(document.getElementById("pieChart"), {
     type: 'pie',
     data: {
       labels: ['A','B','C'],
-      datasets: [{
-        data: [catCount.A, catCount.B, catCount.C],
-        backgroundColor: ['#4caf50','#ff9800','#f44336']
-      }]
+      datasets: [{ data: [catCount.A, catCount.B, catCount.C],
+                   backgroundColor: ['#4caf50','#ff9800','#f44336'] }]
     }
   });
 
+  // Trend (totale verkoop per maand)
   const monthSales = {};
-  months.forEach(m => { monthSales[m] = 0; });
-  months.forEach(m => {
-    allData[m].forEach(r => { monthSales[m] += r.Verkocht; });
-  });
+  months.forEach(m => monthSales[m] = allData[m].reduce((s,r)=>s+r.Verkocht,0));
 
-  new Chart(ctxTrend, {
+  if (charts.trend) charts.trend.destroy();
+  charts.trend = new Chart(document.getElementById("trendChart"), {
     type: 'line',
     data: {
       labels: months,
@@ -283,31 +356,37 @@ function buildCharts() {
   });
 }
 
+// === Filters ===
 function fillProductTypeFilters() {
-  const types = new Set();
-  Object.values(allData).flat().forEach(r => types.add(r.Producttype));
-  const sortedTypes = [...types].sort();
+  const types = new Set(Object.values(productHistory).map(p => p.type).filter(Boolean));
+  const sorted = [...types].sort();
   ['filterType','filterTypeTop','filterTypeChart'].forEach(id => {
     const sel = document.getElementById(id);
     sel.innerHTML = '<option value="">Alle</option>';
-    sortedTypes.forEach(t => {
-      sel.innerHTML += `<option value="${t}">${t}</option>`;
-    });
+    sorted.forEach(t => sel.innerHTML += `<option value="${t}">${t}</option>`);
   });
 }
 
-// Sorteerbare tabellen
+// === Sorteerbare tabellen (alle kolommen) ===
 function makeTableSortable(table) {
   const headers = table.querySelectorAll("th");
   headers.forEach((th, idx) => {
     th.addEventListener("click", () => {
       const rows = Array.from(table.querySelectorAll("tr")).slice(1);
-      const asc = th.classList.toggle("asc");
+      const asc = !th.classList.contains("asc"); // toggle
+      headers.forEach(h => h.classList.remove("asc","desc"));
+      th.classList.add(asc ? "asc" : "desc");
+
       rows.sort((a,b) => {
-        const A = a.children[idx].innerText;
-        const B = b.children[idx].innerText;
-        if (!isNaN(A) && !isNaN(B)) {
-          return asc ? A - B : B - A;
+        const A = a.children[idx].innerText.trim();
+        const B = b.children[idx].innerText.trim();
+
+        // get number if possible (also handles 1.23)
+        const numA = A === '' ? NaN : Number(A.replace(',', '.'));
+        const numB = B === '' ? NaN : Number(B.replace(',', '.'));
+
+        if (!isNaN(numA) && !isNaN(numB)) {
+          return asc ? (numA - numB) : (numB - numA);
         }
         return asc ? A.localeCompare(B) : B.localeCompare(A);
       });
@@ -316,7 +395,7 @@ function makeTableSortable(table) {
   });
 }
 
-// Filters opnieuw laden bij wijziging
+// Rebuild bij filterwijziging
 ['filterType','filterCat','filterStock','searchInput'].forEach(id => {
   document.getElementById(id).addEventListener('input', buildMainTable);
 });
