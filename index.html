@@ -15,6 +15,17 @@ th { cursor: pointer; background: #eee; }
 .filter-container { margin-top: 10px; }
 #monthsOverview { margin-top: 10px; font-weight: bold; }
 .chart-container { width: 600px; margin-top: 20px; }
+#uploadBtn {
+  background-color: #007bff;
+  color: white;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+#uploadBtn:hover {
+  background-color: #0056b3;
+}
 </style>
 </head>
 <body>
@@ -22,7 +33,7 @@ th { cursor: pointer; background: #eee; }
 <h1>ABC Analyse Dashboard</h1>
 <p>Upload één Excelbestand met meerdere maand-sheets (sheetnaam = maand, bijv. 02-2025, 03-2025, etc.).</p>
 
-<button id="uploadBtn">Upload en verwerk Excel</button>
+<button id="uploadBtn" type="button">Upload en verwerk Excel</button>
 <input type="file" id="excelFile" accept=".xlsx,.xls" style="display:none">
 
 <div id="monthsOverview"></div>
@@ -82,10 +93,12 @@ th { cursor: pointer; background: #eee; }
 let allData = {};
 let months = [];
 
+// Klik op knop opent file input
 document.getElementById("uploadBtn").addEventListener("click", () => {
   document.getElementById("excelFile").click();
 });
 
+// Verwerk Excelbestand
 document.getElementById("excelFile").addEventListener("change", handleExcelUpload);
 
 function handleExcelUpload(evt) {
@@ -127,7 +140,6 @@ function normalizeType(type) {
 
 function processMonthData(data) {
   data.forEach(row => { row.Producttype = normalizeType(row.Producttype); });
-  // bereken ABC categorie op basis van stuks
   const sorted = [...data].sort((a,b) => b.Verkocht - a.Verkocht);
   let total = sorted.reduce((sum,r) => sum + r.Verkocht, 0);
   let cum = 0;
@@ -141,7 +153,7 @@ function processMonthData(data) {
 
 function buildMainTable() {
   const table = document.getElementById("mainTable");
-  // hier data aggregeren en renderen (implementatie overeenkomstig eerdere versie)
+  // hier data aggregeren en renderen
 }
 
 function buildTopBottomTable() {
