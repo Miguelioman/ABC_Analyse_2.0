@@ -92,8 +92,8 @@
 </div>
 
 <script>
-let allData = {};           // { '02-2025': [rows], ... }  (met Categorie per maand)
-let months = [];            // ['02-2025', '03-2025', ...] (oplopend)
+let allData = {};           // { '02-2025': [ {title, Producttype, Verkocht, OpVoorraad, Categorie} ] }
+let months = [];            // oplopend gesorteerd
 let productHistory = {};    // per product: { type, stock, cats[per maand], avgScore, soldLast, catLast }
 let charts = { pie: null, trend: null };
 
@@ -119,7 +119,7 @@ function handleExcelUpload(evt) {
       if (rows.length) {
         const m = sheetName.trim();
         months.push(m);
-        allData[m] = processMonthData(rows); // voegt Categorie toe
+        allData[m] = processMonthSheet(rows); // 1 categorie per product per maand
       }
     });
 
@@ -150,35 +150,58 @@ function normalizeType(type) {
              .replace(/(^|\s)\S/g, l => l.toUpperCase());
 }
 
-// Voeg velden toe en bereken ABC per *sheet* op basis van verkoopaantallen.
-function processMonthData(data) {
-  data.forEach(row => {
-    row.Producttype = normalizeType(row["Product type"]);
-    row.Verkocht    = Number(row["Inventory units sold"]) || 0;
-    const voorraad  = Number(row["Ending inventory units"]) || 0;
-    row.OpVoorraad  = voorraad > 0 ? "ja" : "nee";
+/**
+ * Verwerk één sheet (maand):
+ * - Aggregeer op Product title (soms meerdere varianten)
+ * - Bereken ABC op basis van totaal Verkocht per product
+ * - Geef exact 1 rij per product terug
+ */
+function processMonthSheet(rows) {
+  const byTitle = {};
+  rows.forEach(row => {
+    const title  = (row["Product title"] || "").toString();
+    if (!title) return;
+
+    const type   = normalizeType(row["Product type"]);
+    const sold   = Number(row["Inventory units sold"]) || 0;
+    const endInv = Number(row["Ending inventory units"]) || 0;
+
+    if (!byTitle[title]) {
+      byTitle[title] = {
+        title,
+        Producttype: type,
+        Verkocht: 0,
+        EndInv: 0
+      };
+    }
+    byTitle[title].Verkocht += sold;
+    byTitle[title].EndInv    += endInv;
+    // Als het type leeg was, overschrijf met laatste bekende
+    if (!byTitle[title].Producttype && type) byTitle[title].Producttype = type;
   });
 
-  // Sorteer per sheet op verkocht en bereken cumulatief voor ABC
-  const sorted = [...data].sort((a,b) => b.Verkocht - a.Verkocht);
-  const total = sorted.reduce((s,r) => s + r.Verkocht, 0);
+  // Bereken ABC per maand
+  const list = Object.values(byTitle);
+  list.sort((a,b) => b.Verkocht - a.Verkocht);
+  const total = list.reduce((s,r) => s + r.Verkocht, 0);
   let cum = 0;
-  sorted.forEach(r => {
+  list.forEach(r => {
     cum += r.Verkocht;
     const pct = total > 0 ? (cum / total) * 100 : 0;
-    r.Categorie = pct <= 80 ? 'A' : pct <= 95 ? 'B' : 'C';
+    r.Categorie  = pct <= 80 ? 'A' : pct <= 95 ? 'B' : 'C';
+    r.OpVoorraad = r.EndInv > 0 ? 'ja' : 'nee';
   });
-  return sorted;
+  return list;
 }
 
-// Bouw per product het beloop (A/B/C per maand in *dezelfde volgorde als months*)
+// Bouw per product het beloop (A/B/C per maand in *exact* dezelfde volgorde als months)
 function buildProductHistory() {
   // Index per maand op producttitel
   const indexByMonth = {};
   const allTitles = new Set();
   months.forEach(m => {
     const map = {};
-    allData[m].forEach(r => { map[r["Product title"]] = r; allTitles.add(r["Product title"]); });
+    allData[m].forEach(r => { map[r.title] = r; allTitles.add(r.title); });
     indexByMonth[m] = map;
   });
 
@@ -186,9 +209,10 @@ function buildProductHistory() {
   productHistory = {};
 
   allTitles.forEach(title => {
+    // precies één letter per maand (of '-')
     const cats = months.map(m => {
       const row = indexByMonth[m][title];
-      return row ? row.Categorie : '-'; // '-' wanneer product die maand niet voorkomt
+      return row ? row.Categorie : '-';
     });
 
     // Gemiddelde score over aanwezige maanden (A=1, B=2, C=3)
@@ -197,13 +221,13 @@ function buildProductHistory() {
       .map(c => c === 'A' ? 1 : (c === 'B' ? 2 : 3));
     const avg = scores.length ? (scores.reduce((a,b)=>a+b,0) / scores.length) : null;
 
-    // Velden laatste maand (als niet aanwezig: lege / 0)
-    const lastRow = indexByMonth[lastMonth][title];
+    // Velden laatste maand
+    const lastRow = indexByMonth[lastMonth][title] || null;
     let type = '';
     if (lastRow) {
       type = lastRow.Producttype;
     } else {
-      // fallback: dichtstbijzijnde vorige maand met data
+      // fallback: meest recente maand waar het product wél voorkomt
       for (let i = months.length - 1; i >= 0; i--) {
         const r = indexByMonth[months[i]][title];
         if (r) { type = r.Producttype; break; }
@@ -215,7 +239,7 @@ function buildProductHistory() {
       stock: lastRow ? lastRow.OpVoorraad : '',
       soldLast: lastRow ? lastRow.Verkocht : 0,
       catLast: cats[cats.length - 1],
-      cats,
+      cats,                       // lengte = months.length
       avgScore: avg
     };
   });
@@ -233,7 +257,7 @@ function buildMainTable() {
     title,
     type: productHistory[title].type,
     catLast: productHistory[title].catLast,
-    beloop: productHistory[title].cats.join(''),
+    beloop: productHistory[title].cats.join(''), // exact #months letters (of '-')
     avgScore: productHistory[title].avgScore != null ? productHistory[title].avgScore.toFixed(2) : '',
     stock: productHistory[title].stock,
     soldLast: productHistory[title].soldLast
@@ -269,8 +293,7 @@ function buildMainTable() {
   makeTableSortable(table);
 }
 
-// === Tabel Top/Bottom ===
-// Gebaseerd op verkoopaantal in de *laatste maand*
+// === Tabel Top/Bottom === (t.o.v. verkochte aantallen in laatste maand)
 function buildTopBottomTable() {
   const table = document.getElementById("topBottomTable");
   const count       = parseInt(document.getElementById("topCount").value) || 10;
@@ -381,13 +404,10 @@ function makeTableSortable(table) {
         const A = a.children[idx].innerText.trim();
         const B = b.children[idx].innerText.trim();
 
-        // get number if possible (also handles 1.23)
         const numA = A === '' ? NaN : Number(A.replace(',', '.'));
         const numB = B === '' ? NaN : Number(B.replace(',', '.'));
 
-        if (!isNaN(numA) && !isNaN(numB)) {
-          return asc ? (numA - numB) : (numB - numA);
-        }
+        if (!isNaN(numA) && !isNaN(numB)) return asc ? (numA - numB) : (numB - numA);
         return asc ? A.localeCompare(B) : B.localeCompare(A);
       });
       rows.forEach(r => table.appendChild(r));
