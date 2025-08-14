@@ -10,8 +10,8 @@ body { font-family: Arial, sans-serif; margin: 20px; }
 .hidden { display: none; }
 h2 { margin-top: 30px; }
 table { border-collapse: collapse; width: 100%; margin-top: 10px; }
-th, td { border: 1px solid #ccc; padding: 6px; text-align: left; }
-th { background: #eee; }
+th, td { border: 1px solid #ccc; padding: 6px; text-align: left; cursor: default; }
+th { background: #eee; cursor: pointer; }
 .filter-container { margin-top: 10px; }
 #monthsOverview { margin-top: 10px; font-weight: bold; }
 .chart-container { width: 600px; margin-top: 20px; }
@@ -23,9 +23,7 @@ th { background: #eee; }
   border-radius: 4px;
   cursor: pointer;
 }
-#uploadBtn:hover {
-  background-color: #0056b3;
-}
+#uploadBtn:hover { background-color: #0056b3; }
 </style>
 </head>
 <body>
@@ -92,6 +90,7 @@ th { background: #eee; }
 <script>
 let allData = {};
 let months = [];
+let productHistory = {};
 
 // Upload knop
 document.getElementById("uploadBtn").addEventListener("click", () => {
@@ -108,6 +107,7 @@ function handleExcelUpload(evt) {
     const workbook = XLSX.read(e.target.result, {type: 'binary'});
     months = [];
     allData = {};
+    productHistory = {};
     workbook.SheetNames.forEach(sheetName => {
       const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
       if (sheetData.length > 0) {
@@ -121,6 +121,8 @@ function handleExcelUpload(evt) {
       const [mb, yb] = b.split('-').map(Number);
       return yb === ya ? ma - mb : ya - yb;
     });
+    // Bouw productHistory voor beloop en score
+    buildProductHistory();
     document.getElementById("monthsOverview").textContent = "📅 Geïmporteerde maanden: " + months.join(', ');
     document.getElementById("mainContent").classList.remove("hidden");
     buildMainTable();
@@ -155,6 +157,18 @@ function processMonthData(data) {
   return sorted;
 }
 
+function buildProductHistory() {
+  months.forEach(month => {
+    allData[month].forEach(r => {
+      const key = r["Product title"];
+      if (!productHistory[key]) {
+        productHistory[key] = { type: r.Producttype, stock: r.OpVoorraad, cats: [] };
+      }
+      productHistory[key].cats.push(r.Categorie);
+    });
+  });
+}
+
 function buildMainTable() {
   const table = document.getElementById("mainTable");
   const filterType = document.getElementById("filterType").value;
@@ -163,22 +177,36 @@ function buildMainTable() {
   const search = document.getElementById("searchInput").value.toLowerCase();
 
   let rows = Object.values(allData).flat();
+  let unique = {};
+  rows.forEach(r => { unique[r["Product title"]] = r; });
+  rows = Object.values(unique);
+
   if (filterType) rows = rows.filter(r => r.Producttype === filterType);
-  if (filterCat) rows = rows.filter(r => r.Categorie === filterCat);
+  if (filterCat) rows = rows.filter(r => productHistory[r["Product title"]]?.cats.includes(filterCat));
   if (filterStock) rows = rows.filter(r => r.OpVoorraad === filterStock);
   if (search) rows = rows.filter(r => (r["Product title"] || "").toLowerCase().includes(search));
 
-  let html = "<tr><th>Product</th><th>Type</th><th>Categorie</th><th>Verkocht</th><th>Op voorraad</th></tr>";
+  let html = "<tr>" +
+    "<th>Product</th><th>Type</th><th>Categorie (laatste maand)</th>" +
+    "<th>Beloop</th><th>Gem. Score</th><th>Op voorraad</th><th>Verkocht (laatste maand)</th>" +
+    "</tr>";
+
   rows.forEach(r => {
+    const hist = productHistory[r["Product title"]];
+    const beloop = hist.cats.join('');
+    const score = (hist.cats.reduce((a,c) => a + (c==='A'?1:c==='B'?2:3),0) / hist.cats.length).toFixed(2);
     html += `<tr>
       <td>${r["Product title"]}</td>
       <td>${r.Producttype}</td>
       <td>${r.Categorie}</td>
-      <td>${r.Verkocht}</td>
+      <td>${beloop}</td>
+      <td>${score}</td>
       <td>${r.OpVoorraad}</td>
+      <td>${r.Verkocht}</td>
     </tr>`;
   });
   table.innerHTML = html;
+  makeTableSortable(table);
 }
 
 function buildTopBottomTable() {
@@ -195,15 +223,22 @@ function buildTopBottomTable() {
   rows.sort((a,b) => mode === "top" ? b.Verkocht - a.Verkocht : a.Verkocht - b.Verkocht);
   rows = rows.slice(0, count);
 
-  let html = "<tr><th>Product</th><th>Type</th><th>Verkocht</th></tr>";
+  let html = "<tr><th>Product</th><th>Type</th><th>Beloop</th><th>Gem. Score</th><th>Verkocht</th></tr>";
   rows.forEach(r => {
+    const hist = productHistory[r["Product title"]] || { cats: [] };
+    const beloop = hist.cats.join('');
+    const score = hist.cats.length > 0 ? 
+      (hist.cats.reduce((a,c) => a + (c==='A'?1:c==='B'?2:3),0) / hist.cats.length).toFixed(2) : '';
     html += `<tr>
       <td>${r["Product title"]}</td>
       <td>${r.Producttype}</td>
+      <td>${beloop}</td>
+      <td>${score}</td>
       <td>${r.Verkocht}</td>
     </tr>`;
   });
   table.innerHTML = html;
+  makeTableSortable(table);
 }
 
 function buildCharts() {
@@ -257,6 +292,26 @@ function fillProductTypeFilters() {
     sel.innerHTML = '<option value="">Alle</option>';
     sortedTypes.forEach(t => {
       sel.innerHTML += `<option value="${t}">${t}</option>`;
+    });
+  });
+}
+
+// Sorteerbare tabellen
+function makeTableSortable(table) {
+  const headers = table.querySelectorAll("th");
+  headers.forEach((th, idx) => {
+    th.addEventListener("click", () => {
+      const rows = Array.from(table.querySelectorAll("tr")).slice(1);
+      const asc = th.classList.toggle("asc");
+      rows.sort((a,b) => {
+        const A = a.children[idx].innerText;
+        const B = b.children[idx].innerText;
+        if (!isNaN(A) && !isNaN(B)) {
+          return asc ? A - B : B - A;
+        }
+        return asc ? A.localeCompare(B) : B.localeCompare(A);
+      });
+      rows.forEach(r => table.appendChild(r));
     });
   });
 }
