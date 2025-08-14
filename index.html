@@ -11,7 +11,7 @@ body { font-family: Arial, sans-serif; margin: 20px; }
 h2 { margin-top: 30px; }
 table { border-collapse: collapse; width: 100%; margin-top: 10px; }
 th, td { border: 1px solid #ccc; padding: 6px; text-align: left; }
-th { cursor: pointer; background: #eee; }
+th { background: #eee; }
 .filter-container { margin-top: 10px; }
 #monthsOverview { margin-top: 10px; font-weight: bold; }
 .chart-container { width: 600px; margin-top: 20px; }
@@ -93,12 +93,11 @@ th { cursor: pointer; background: #eee; }
 let allData = {};
 let months = [];
 
-// Knop opent file input
+// Upload knop
 document.getElementById("uploadBtn").addEventListener("click", () => {
   document.getElementById("excelFile").click();
 });
 
-// File upload verwerken
 document.getElementById("excelFile").addEventListener("change", handleExcelUpload);
 
 function handleExcelUpload(evt) {
@@ -138,11 +137,12 @@ function normalizeType(type) {
              .replace(/(^|\s)\S/g, l => l.toUpperCase());
 }
 
-// Past kolomnamen aan naar interne standaard
 function processMonthData(data) {
   data.forEach(row => {
     row.Producttype = normalizeType(row["Product type"]);
     row.Verkocht = Number(row["Inventory units sold"]) || 0;
+    const voorraad = Number(row["Ending inventory units"]) || 0;
+    row.OpVoorraad = voorraad > 0 ? "ja" : "nee";
   });
   const sorted = [...data].sort((a,b) => b.Verkocht - a.Verkocht);
   let total = sorted.reduce((sum,r) => sum + r.Verkocht, 0);
@@ -157,16 +157,95 @@ function processMonthData(data) {
 
 function buildMainTable() {
   const table = document.getElementById("mainTable");
-  // hier data aggregeren en renderen
+  const filterType = document.getElementById("filterType").value;
+  const filterCat = document.getElementById("filterCat").value;
+  const filterStock = document.getElementById("filterStock").value;
+  const search = document.getElementById("searchInput").value.toLowerCase();
+
+  let rows = Object.values(allData).flat();
+  if (filterType) rows = rows.filter(r => r.Producttype === filterType);
+  if (filterCat) rows = rows.filter(r => r.Categorie === filterCat);
+  if (filterStock) rows = rows.filter(r => r.OpVoorraad === filterStock);
+  if (search) rows = rows.filter(r => (r["Product title"] || "").toLowerCase().includes(search));
+
+  let html = "<tr><th>Product</th><th>Type</th><th>Categorie</th><th>Verkocht</th><th>Op voorraad</th></tr>";
+  rows.forEach(r => {
+    html += `<tr>
+      <td>${r["Product title"]}</td>
+      <td>${r.Producttype}</td>
+      <td>${r.Categorie}</td>
+      <td>${r.Verkocht}</td>
+      <td>${r.OpVoorraad}</td>
+    </tr>`;
+  });
+  table.innerHTML = html;
 }
 
 function buildTopBottomTable() {
   const table = document.getElementById("topBottomTable");
-  // vergelijkbaar renderen
+  const count = parseInt(document.getElementById("topCount").value) || 10;
+  const mode = document.getElementById("topBottomSelect").value;
+  const filterType = document.getElementById("filterTypeTop").value;
+  const filterStock = document.getElementById("filterStockTop").value;
+
+  let rows = Object.values(allData).flat();
+  if (filterType) rows = rows.filter(r => r.Producttype === filterType);
+  if (filterStock) rows = rows.filter(r => r.OpVoorraad === filterStock);
+
+  rows.sort((a,b) => mode === "top" ? b.Verkocht - a.Verkocht : a.Verkocht - b.Verkocht);
+  rows = rows.slice(0, count);
+
+  let html = "<tr><th>Product</th><th>Type</th><th>Verkocht</th></tr>";
+  rows.forEach(r => {
+    html += `<tr>
+      <td>${r["Product title"]}</td>
+      <td>${r.Producttype}</td>
+      <td>${r.Verkocht}</td>
+    </tr>`;
+  });
+  table.innerHTML = html;
 }
 
 function buildCharts() {
-  // maak pieChart en trendChart met Chart.js
+  const ctxPie = document.getElementById("pieChart").getContext("2d");
+  const ctxTrend = document.getElementById("trendChart").getContext("2d");
+  const filterType = document.getElementById("filterTypeChart").value;
+
+  let rows = Object.values(allData).flat();
+  if (filterType) rows = rows.filter(r => r.Producttype === filterType);
+
+  const catCount = {A:0, B:0, C:0};
+  rows.forEach(r => { catCount[r.Categorie]++; });
+
+  new Chart(ctxPie, {
+    type: 'pie',
+    data: {
+      labels: ['A','B','C'],
+      datasets: [{
+        data: [catCount.A, catCount.B, catCount.C],
+        backgroundColor: ['#4caf50','#ff9800','#f44336']
+      }]
+    }
+  });
+
+  const monthSales = {};
+  months.forEach(m => { monthSales[m] = 0; });
+  months.forEach(m => {
+    allData[m].forEach(r => { monthSales[m] += r.Verkocht; });
+  });
+
+  new Chart(ctxTrend, {
+    type: 'line',
+    data: {
+      labels: months,
+      datasets: [{
+        label: 'Totale verkoop',
+        data: months.map(m => monthSales[m]),
+        fill: false,
+        borderColor: 'blue'
+      }]
+    }
+  });
 }
 
 function fillProductTypeFilters() {
@@ -181,6 +260,15 @@ function fillProductTypeFilters() {
     });
   });
 }
+
+// Filters opnieuw laden bij wijziging
+['filterType','filterCat','filterStock','searchInput'].forEach(id => {
+  document.getElementById(id).addEventListener('input', buildMainTable);
+});
+['topCount','topBottomSelect','filterTypeTop','filterStockTop'].forEach(id => {
+  document.getElementById(id).addEventListener('input', buildTopBottomTable);
+});
+document.getElementById('filterTypeChart').addEventListener('input', buildCharts);
 </script>
 
 </body>
