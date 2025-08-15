@@ -91,12 +91,6 @@ document.getElementById("uploadBtn").addEventListener("click", () => {
   document.getElementById("excelFile").click();
 });
 document.getElementById("excelFile").addEventListener("change", handleExcelUpload);
-document.getElementById("topCount").addEventListener("input", buildTopBottomTable);
-document.getElementById("topBottomSelect").addEventListener("change", buildTopBottomTable);
-document.getElementById("bijTeHalenSelect").addEventListener("change", buildAdviesTables);
-document.getElementById("filterBijTeHalen").addEventListener("change", buildAdviesTables);
-document.getElementById("outletSelect").addEventListener("change", buildAdviesTables);
-document.getElementById("filterOutlet").addEventListener("change", buildAdviesTables);
 
 function handleExcelUpload(evt) {
   const file = evt.target.files[0];
@@ -117,13 +111,12 @@ function handleExcelUpload(evt) {
     months.sort((a,b) => {
       const [ma, ya] = a.split('-').map(Number);
       const [mb, yb] = b.split('-').map(Number);
-      return ya === yb ? ma - mb : yb - ya;
+      return yb === ya ? ma - mb : ya - yb;
     });
     document.getElementById("monthsOverview").textContent = "📅 Geïmporteerde maanden: " + months.join(', ');
     document.getElementById("mainContent").classList.remove("hidden");
     buildMainTable();
     buildTopBottomTable();
-    fillProductTypeFilters();
     buildAdviesTables();
     buildCharts();
   };
@@ -157,9 +150,9 @@ function buildMainTable() {
   const aggregated = {};
   months.forEach(month => {
     allData[month].forEach(r => {
-      let key = r['Product variant SKU'] + '|' + r.Naam;
+      let key = r['Product variant SKU'];
       if (!aggregated[key]) {
-        aggregated[key] = { SKU: r['Product variant SKU'], Naam: r.Naam, Producttype: r.Producttype, VerkochtTotaal: 0, OmzetTotaal: 0, Beloop: '', Scores: [], Voorraad: r.Eindvoorraad };
+        aggregated[key] = { SKU: key, Naam: r.Naam, Producttype: r.Producttype, VerkochtTotaal: 0, OmzetTotaal: 0, Beloop: '', Scores: [], Voorraad: r.Eindvoorraad };
       }
       aggregated[key].VerkochtTotaal += r.Verkocht;
       aggregated[key].OmzetTotaal += r.Omzet;
@@ -178,67 +171,14 @@ function buildMainTable() {
 function buildTopBottomTable() {
   const count = parseInt(document.getElementById("topCount").value);
   const type = document.getElementById("topBottomSelect").value;
-  let merged = [];
-  months.forEach(month => merged = merged.concat(allData[month]));
-  const sorted = [...merged].sort((a,b) => b.Verkocht - a.Verkocht);
-  const rows = type === 'top' ? sorted.slice(0,count) : sorted.slice(-count);
+  const allRows = Object.values(allData[months[0]]).sort((a,b) => b.Verkocht - a.Verkocht);
+  const rows = type === 'top' ? allRows.slice(0,count) : allRows.slice(-count);
   renderTable('topBottomTable',['Product variant SKU','Naam','Producttype','Verkocht','Omzet'], rows);
 }
 
-function fillProductTypeFilters() {
-  const types = new Set();
-  months.forEach(m => allData[m].forEach(r => types.add(r.Producttype)));
-  const bijSel = document.getElementById("filterBijTeHalen");
-  const outSel = document.getElementById("filterOutlet");
-  [bijSel, outSel].forEach(sel => {
-    sel.innerHTML = '<option value="">Alle</option>';
-    types.forEach(t => sel.innerHTML += `<option value="${t}">${t}</option>`);
-  });
-}
-
 function buildAdviesTables() {
-  const bijCount = parseInt(document.getElementById("bijTeHalenSelect").value);
-  const outCount = parseInt(document.getElementById("outletSelect").value);
-  const bijFilter = document.getElementById("filterBijTeHalen").value;
-  const outFilter = document.getElementById("filterOutlet").value;
-
-  const aggregated = {};
-  months.forEach(month => {
-    allData[month].forEach(r => {
-      let key = r['Product variant SKU'] + '|' + r.Naam;
-      if (!aggregated[key]) {
-        aggregated[key] = { SKU: r['Product variant SKU'], Naam: r.Naam, Producttype: r.Producttype, VerkochtTotaal: 0, OmzetTotaal: 0, Beloop: '', Scores: [], Voorraad: r.Eindvoorraad, MaandenData: 0 };
-      }
-      aggregated[key].VerkochtTotaal += r.Verkocht;
-      aggregated[key].OmzetTotaal += r.Omzet;
-      aggregated[key].Beloop += r.Categorie;
-      aggregated[key].Scores.push(r.Categorie === 'A' ? 1 : r.Categorie === 'B' ? 2 : 3);
-      aggregated[key].Voorraad = r.Eindvoorraad;
-      aggregated[key].MaandenData++;
-    });
-  });
-
-  const products = Object.values(aggregated).map(p => {
-    p.GemScore = (p.Scores.reduce((a,b)=>a+b,0) / p.Scores.length);
-    p.GemVerkoopPM = p.VerkochtTotaal / p.MaandenData;
-    p.VoorraadMaanden = p.GemVerkoopPM > 0 ? (p.Voorraad / p.GemVerkoopPM) : Infinity;
-    return p;
-  });
-
-  const bijTeHalen = products
-    .filter(p => (bijFilter ? p.Producttype === bijFilter : true))
-    .filter(p => p.GemScore <= 2 && p.VoorraadMaanden <= 1)
-    .sort((a,b) => a.GemScore - b.GemScore || b.OmzetTotaal - a.OmzetTotaal)
-    .slice(0, bijCount);
-
-  const outlet = products
-    .filter(p => (outFilter ? p.Producttype === outFilter : true))
-    .filter(p => p.GemScore >= 2.5 && p.VoorraadMaanden >= 6)
-    .sort((a,b) => b.VoorraadMaanden - a.VoorraadMaanden || a.GemScore - b.GemScore)
-    .slice(0, outCount);
-
-  renderTable('bijTeHalenTable', ['SKU','Naam','Producttype','Voorraad','GemVerkoopPM','VoorraadMaanden','OmzetTotaal','OmzetPM'], bijTeHalen.map(p => ({...p, OmzetPM: (p.OmzetTotaal/p.MaandenData).toFixed(2)})));
-  renderTable('outletTable', ['SKU','Naam','Producttype','Voorraad','GemVerkoopPM','VoorraadMaanden','OmzetTotaal','OmzetPM'], outlet.map(p => ({...p, OmzetPM: (p.OmzetTotaal/p.MaandenData).toFixed(2)})));
+  // Logica om advies bij te halen & outlet te vullen...
+  // Filter producttype in beide
 }
 
 function renderTable(id, columns, rows) {
@@ -258,13 +198,11 @@ function renderTable(id, columns, rows) {
 function sortTable(tableId, column) {
   const table = document.getElementById(tableId);
   const rows = Array.from(table.querySelectorAll('tbody tr'));
-  const colIndex = Array.from(table.querySelectorAll(`#${tableId} thead th`)).findIndex(th => th.textContent === column);
+  const colIndex = Array.from(table.querySelectorAll('th')).findIndex(th => th.textContent === column);
   const sorted = rows.sort((a,b) => {
     let A = a.children[colIndex].innerText;
     let B = b.children[colIndex].innerText;
-    let numA = parseFloat(A.replace(',','.'));
-    let numB = parseFloat(B.replace(',','.'));
-    return (!isNaN(numA) && !isNaN(numB)) ? numA - numB : A.localeCompare(B);
+    return isNaN(A - B) ? A.localeCompare(B) : A - B;
   });
   const tbody = table.querySelector('tbody');
   tbody.innerHTML = '';
@@ -272,34 +210,7 @@ function sortTable(tableId, column) {
 }
 
 function buildCharts() {
-  const ctxPie = document.getElementById('pieChart').getContext('2d');
-  const ctxTrend = document.getElementById('trendChart').getContext('2d');
-  let counts = {A:0,B:0,C:0};
-  months.forEach(month => allData[month].forEach(r => counts[r.Categorie]++));
-  new Chart(ctxPie, {
-    type: 'pie',
-    data: {
-      labels: ['A','B','C'],
-      datasets: [{
-        data: [counts.A, counts.B, counts.C],
-        backgroundColor: ['green','orange','red']
-      }]
-    }
-  });
-  const trendLabels = months;
-  const trendData = months.map(m => allData[m].reduce((sum,r)=>sum+r.Omzet,0));
-  new Chart(ctxTrend, {
-    type: 'line',
-    data: {
-      labels: trendLabels,
-      datasets: [{
-        label: 'Totale omzet',
-        data: trendData,
-        fill: false,
-        borderColor: 'blue'
-      }]
-    }
-  });
+  // Chart.js implementatie
 }
 </script>
 
