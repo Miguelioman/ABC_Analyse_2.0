@@ -1,146 +1,77 @@
 <!DOCTYPE html>
 <html lang="nl">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8">
   <title>ABC Analyse Webapp</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-
-  <!-- Libraries -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
-  <link rel="stylesheet" href="https://cdn.datatables.net/1.13.4/css/jquery.dataTables.min.css" />
   <script src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
-
+  <link rel="stylesheet" href="https://cdn.datatables.net/1.13.4/css/jquery.dataTables.min.css">
   <style>
-    :root {
-      --bg: #0f172a; /* slate-900 */
-      --card: #111827; /* gray-900 */
-      --muted: #94a3b8; /* slate-400 */
-      --text: #e5e7eb; /* gray-200 */
-      --ring: #334155; /* slate-700 */
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .red { background-color: #f8d7da; }
+    .orange { background-color: #fff3cd; }
+    .green { background-color: #d4edda; }
+    .filters { margin-bottom: 15px; }
+    .filters label { margin-right: 15px; }
+    div.dataTables_wrapper div.dataTables_scrollHead {
+      overflow: auto;
+      position: relative;
     }
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; background: var(--bg); color: var(--text); }
-    .container { max-width: 1400px; margin: 24px auto; padding: 0 16px; }
-    h1 { font-size: 28px; margin: 8px 0 16px; }
-    .card { background: var(--card); border: 1px solid var(--ring); border-radius: 16px; padding: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.25); }
-    .row { display: grid; grid-template-columns: 1fr; gap: 12px; }
-    @media (min-width: 900px) { .row { grid-template-columns: 1fr 3fr; align-items: start; } }
-
-    .filters { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; margin-top: 12px; }
-    @media (min-width: 840px) { .filters { grid-template-columns: repeat(5, minmax(0,1fr)); } }
-    .field { display:flex; flex-direction: column; gap:6px; }
-    .field label { font-size: 12px; color: var(--muted); }
-    select, input[type="text"] { background: #0b1220; color: var(--text); border: 1px solid var(--ring); border-radius: 12px; padding: 10px 12px; outline: none; }
-    input[type="file"] { display:block; }
-
-    .pill { padding: 2px 8px; border-radius: 999px; font-weight: 600; }
-    .red    { background-color: #7f1d1d; color: #fecaca; }
-    .orange { background-color: #78350f; color: #fde68a; }
-    .green  { background-color: #064e3b; color: #bbf7d0; }
-    .neutral{ background:#1f2937; color:#cbd5e1; }
-
-    /* DataTables compact layout */
-    table.dataTable tbody td, table.dataTable thead th { padding: 6px 10px; font-size: 13px; white-space: nowrap; }
-    table.dataTable thead th { background: #0b1220; color: #cbd5e1; border-bottom: 1px solid var(--ring); }
-    .dt-container .dt-search { display: none; } /* hide built-in global search */
-    .months { color: var(--muted); font-size: 14px; }
-    .error { color: #fecaca; background:#7f1d1d; border:1px solid #ef4444; padding:8px 12px; border-radius: 10px; display:none; margin-top: 8px; }
-
-    /* Top horizontal scrollbar (in plaats van onderaan) */
-    .top-scroll-wrap { position: sticky; top: 0; background: var(--card); z-index: 5; border: 1px solid var(--ring); border-radius: 10px; margin: 8px 0 12px; }
-    #topScroll { overflow-x: auto; overflow-y: hidden; height: 16px; }
-    #topScrollInner { height: 1px; } /* maakt de balk */
-    /* Verberg de onderste horizontale scrollbar en laat de topbar sturen */
-    div.dataTables_scrollBody { overflow-x: hidden !important; }
+    div.dataTables_wrapper div.dataTables_scrollHead table {
+      margin-bottom: 0 !important;
+    }
   </style>
 </head>
 <body>
-  <div class="container">
-    <h1>ABC Analyse</h1>
+  <h1>ABC Analyse</h1>
+  <input type="file" id="upload" accept=".xlsx,.xls" />
+  <p><strong>Geïmporteerde maanden:</strong> <span id="months"></span></p>
 
-    <div class="row">
-      <div class="card">
-        <div class="field">
-          <label for="upload">Upload Excel (.xlsx/.xls)</label>
-          <input type="file" id="upload" accept=".xlsx,.xls" />
-        </div>
-        <p class="months"><strong>Geïmporteerde maanden:</strong> <span id="months">–</span></p>
-        <div id="errorBox" class="error"></div>
-
-        <div class="filters">
-          <div class="field">
-            <label for="filterQuery">Zoek (SKU of naam)</label>
-            <input type="text" id="filterQuery" placeholder="Bijv. 12345 of 'sok'" />
-          </div>
-          <div class="field">
-            <label for="filterType">Filter producttype</label>
-            <select id="filterType"><option value="">Alle</option></select>
-          </div>
-          <div class="field">
-            <label for="filterABC">Filter categorie (gemiddeld)</label>
-            <select id="filterABC">
-              <option value="">Alle</option>
-              <option value="A">A</option>
-              <option value="B">B</option>
-              <option value="C">C</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="filterStock">Op voorraad (laatste maand)</label>
-            <select id="filterStock">
-              <option value="">Alle</option>
-              <option value="Ja">Ja</option>
-              <option value="Nee">Nee</option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="filterDays">Dagen resterende voorraad</label>
-            <select id="filterDays">
-              <option value="">Alle</option>
-              <option value="<30">&lt; 30</option>
-              <option value="30-60">30–60</option>
-              <option value=">60">&gt; 60</option>
-              <option value="inf">∞ / geen verbruik</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      <div class="card" style="overflow:visible;">
-        <!-- bovenste horizontale scrollbar -->
-        <div class="top-scroll-wrap">
-          <div id="topScroll"><div id="topScrollInner"></div></div>
-        </div>
-
-        <table id="result" class="display" style="width:100%">
-          <thead>
-            <tr>
-              <th>SKU</th>
-              <th>Productnaam</th>
-              <th>Variant</th>
-              <th>Producttype</th>
-              <th>Totaal verkopen</th>
-              <th>Gem. verkopen / maand</th>
-              <th>Totale omzet</th>
-              <th>Gem. omzet / maand</th>
-              <th>Beloop ABC</th>
-              <th>Gem. score</th>
-              <th>Voorraad</th>
-              <th>Op voorraad</th>
-              <th>Voorspelde voorraadduur (dagen)</th>
-              <!-- hidden helper for filtering -->
-              <th style="display:none;">_avgCat</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </div>
+  <div class="filters">
+    <label>Filter producttype:
+      <select id="filterType"><option value="">Alle</option></select>
+    </label>
+    <label>Filter categorie:
+      <select id="filterABC"><option value="">Alle</option><option value="A">A</option><option value="B">B</option><option value="C">C</option></select>
+    </label>
+    <label>Op voorraad:
+      <select id="filterStock"><option value="">Alle</option><option value="Ja">Ja</option><option value="Nee">Nee</option></select>
+    </label>
+    <label>Dagen resterende voorraad:
+      <select id="filterDays">
+        <option value="">Alle</option>
+        <option value="lt30">&lt; 30</option>
+        <option value="30to60">30–60</option>
+        <option value="gt60">&gt; 60</option>
+      </select>
+    </label>
   </div>
 
+  <table id="result" class="display nowrap" style="width:100%">
+    <thead>
+      <tr>
+        <th>SKU</th>
+        <th>Productnaam</th>
+        <th>Variant</th>
+        <th>Producttype</th>
+        <th>Totaal verkopen</th>
+        <th>Gem. verkopen / maand</th>
+        <th>Totale omzet</th>
+        <th>Gem. omzet / maand</th>
+        <th>ABC verloop</th>
+        <th>Gem. score</th>
+        <th>Voorraad</th>
+        <th>Op voorraad</th>
+        <th>Dagen resterende voorraad</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
 <script>
-// ====== Prijzen per producttype ======
-const PRIJZEN = {
+// vaste prijzen
+const prijzen = {
   'sokken': 10.95,
   'compressiesokken': 29.99,
   'klompen/schoenen': 79.99,
@@ -148,280 +79,136 @@ const PRIJZEN = {
   'mokken': 14.99
 };
 
-function normaliseerType(t) {
-  const s = (t ?? '').toString().trim().toLowerCase();
-  if (!s) return '';
-  if (s.includes('compress')) return 'compressiesokken';
-  if (s.includes('sneaker')) return 'sneakers';
-  if (s.includes('mug') || s.includes('mok')) return 'mokken';
-  if (s.includes('clog') || s.includes('klomp') || s.includes('shoe') || s.includes('schoen')) return 'klompen/schoenen';
-  if (s.includes('sock') || s.includes('sok')) return 'sokken';
-  return s;
-}
-function prijsVoorType(t) {
-  const key = normaliseerType(t);
-  return PRIJZEN[key] ?? 0;
-}
-
-// ABC per maand
 function abcAnalyse(producten) {
-  const totaalOmzet = producten.reduce((s, p) => s + p.omzet, 0);
-  const arr = [...producten].sort((a, b) => b.omzet - a.omzet);
+  let totaalOmzet = producten.reduce((s, p) => s + p.omzet, 0);
+  producten.sort((a, b) => b.omzet - a.omzet);
   let cumulatief = 0;
-  arr.forEach(p => {
+  producten.forEach(p => {
     cumulatief += p.omzet;
-    const aandeel = totaalOmzet > 0 ? (cumulatief / totaalOmzet) : 1;
+    let aandeel = cumulatief / totaalOmzet;
     if (aandeel <= 0.8) p.cat = 'A';
     else if (aandeel <= 0.95) p.cat = 'B';
     else p.cat = 'C';
   });
-  return arr;
+  return producten;
 }
 
-function berekenVoorraadduurDagen(eindVoorraad, gemVerkopenPerMaand) {
-  const v = Number(eindVoorraad) || 0;
-  const g = Number(gemVerkopenPerMaand) || 0;
-  if (g <= 0) return 1e9;           // ~∞
-  return (v / g) * 30;              // dagen
-}
-function formatCurrency(n) {
-  return new Intl.NumberFormat('nl-NL', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2 }).format(Number(n)||0);
-}
-function toonError(msg) {
-  const box = document.getElementById('errorBox');
-  box.textContent = msg;
-  box.style.display = 'block';
-}
-function clearError() {
-  const box = document.getElementById('errorBox');
-  box.textContent = '';
-  box.style.display = 'none';
+function berekenVoorraadduur(eindvoorraad, gemVerkopen) {
+  if (gemVerkopen === 0) return Infinity;
+  return (eindvoorraad / gemVerkopen) * 30;
 }
 
-// ====== Bestandsupload ======
 document.getElementById('upload').addEventListener('change', handleFile, false);
 
-async function handleFile(e) {
-  clearError();
-  const file = e.target.files?.[0];
-  if (!file) return;
-  try {
-    const data = await file.arrayBuffer();
-    const workbook = XLSX.read(new Uint8Array(data), { type: 'array' });
-
+function handleFile(e) {
+  const file = e.target.files[0];
+  const reader = new FileReader();
+  reader.onload = function(evt) {
+    const data = new Uint8Array(evt.target.result);
+    const workbook = XLSX.read(data, {type: 'array'});
     const maanden = workbook.SheetNames;
-    document.getElementById('months').textContent = maanden.join(', ');
+    document.getElementById('months').innerText = maanden.join(', ');
 
-    const perMaandCats = []; // [{sku: 'A'|'B'|'C'}]
-    const totaalPerSku = {}; // sku -> aggregate
+    let productenMap = {};
 
-    maanden.forEach((maand, mIdx) => {
-      const rows = XLSX.utils.sheet_to_json(workbook.Sheets[maand], { defval: null });
-      const gefilterd = rows.filter(r => Number(r['Starting inventory units']) > 0);
-
-      const perSku = {};
-      for (const r of gefilterd) {
-        const sku = (r['Product variant SKU'] ?? '').toString();
-        if (!sku) continue;
-        const naam = r['Product title'] ?? '';
-        const variant = r['Product variant title'] ?? '';
-        const type = r['Product type'] ?? '';
-        const verkocht = Number(r['Inventory units sold']) || 0;
-        const eindVoorraad = Number(r['Ending inventory units']) || 0;
-        const omzet = verkocht * prijsVoorType(type);
-
-        if (!perSku[sku]) perSku[sku] = { sku, naam, variant, type, verkocht: 0, omzet: 0, eindvoorraad: eindVoorraad };
-        perSku[sku].verkocht += verkocht;
-        perSku[sku].omzet += omzet;
-        perSku[sku].eindvoorraad = eindVoorraad;
-      }
-
-      const metCats = abcAnalyse(Object.values(perSku));
-      const catsMap = {};
-      for (const p of metCats) catsMap[p.sku] = p.cat;
-      perMaandCats[mIdx] = catsMap;
-
-      for (const p of metCats) {
-        if (!totaalPerSku[p.sku]) {
-          totaalPerSku[p.sku] = { sku: p.sku, naam: p.naam, variant: p.variant, type: p.type, verkocht: 0, omzet: 0, eindvoorraad: p.eindvoorraad, cats: [] };
+    maanden.forEach((maand) => {
+      let sheet = XLSX.utils.sheet_to_json(workbook.Sheets[maand]);
+      // filter beginvoorraad = 0
+      sheet = sheet.filter(r => r["Starting inventory units"] > 0);
+      let producten = {};
+      sheet.forEach(r => {
+        let prijs = prijzen[(r["Product type"]||'').toLowerCase()] || 0;
+        let omzet = r["Inventory units sold"] * prijs;
+        let sku = r["Product variant SKU"];
+        if (!producten[sku]) {
+          producten[sku] = {
+            sku: sku,
+            naam: r["Product title"],
+            variant: r["Product variant title"],
+            type: r["Product type"],
+            verkocht: 0,
+            omzet: 0,
+            eindvoorraad: r["Ending inventory units"]
+          };
         }
-        totaalPerSku[p.sku].verkocht += p.verkocht;
-        totaalPerSku[p.sku].omzet += p.omzet;
-        totaalPerSku[p.sku].eindvoorraad = p.eindvoorraad; // laatste maand
-      }
+        producten[sku].verkocht += r["Inventory units sold"];
+        producten[sku].omzet += omzet;
+        producten[sku].eindvoorraad = r["Ending inventory units"];
+      });
+      let arr = abcAnalyse(Object.values(producten));
+      arr.forEach(p => {
+        if (!productenMap[p.sku]) {
+          productenMap[p.sku] = {sku: p.sku, naam: p.naam, variant:p.variant, type: p.type, verkopen:0, omzet:0, cats:[], eindvoorraad:p.eindvoorraad};
+        }
+        productenMap[p.sku].verkopen += p.verkocht;
+        productenMap[p.sku].omzet += p.omzet;
+        productenMap[p.sku].cats.push(p.cat);
+        productenMap[p.sku].eindvoorraad = p.eindvoorraad;
+      });
     });
 
-    // Cats per maand (met '-' als product die maand niet meedeed)
-    const alleSkus = Object.keys(totaalPerSku);
-    for (const sku of alleSkus) {
-      const seq = [];
-      for (let i = 0; i < perMaandCats.length; i++) seq.push(perMaandCats[i]?.[sku] ?? '-');
-      totaalPerSku[sku].cats = seq;
-    }
-
-    const mCount = maanden.length;
-    const resultaten = alleSkus.map(sku => {
-      const p = totaalPerSku[sku];
-      const gemVerkopen = (p.verkocht || 0) / mCount;
-      const gemOmzet = (p.omzet || 0) / mCount;
-      const verloop = p.cats.join('');
-      const scores = p.cats.filter(c => c==='A'||c==='B'||c==='C').map(c => c==='A'?1:(c==='B'?2:3));
-      const gemScore = scores.length ? (scores.reduce((s,n)=>s+n,0)/scores.length) : null;
-      let avgCat = '';
-      if (gemScore !== null) avgCat = gemScore < 1.5 ? 'A' : (gemScore < 2.5 ? 'B' : 'C');
-
-      const voorraad = Number(p.eindvoorraad) || 0;
-      const opVoorraad = voorraad > 0 ? 'Ja' : 'Nee';
-      const duurDagen = berekenVoorraadduurDagen(voorraad, gemVerkopen);
-      let kleur = 'green';
-      if (duurDagen < 30) kleur = 'red';
-      else if (duurDagen < 60) kleur = 'orange';
-
+    let resultaten = Object.values(productenMap).map(p => {
+      let maandenCount = maanden.length;
+      let gemVerkopen = p.verkopen / maandenCount;
+      let gemOmzet = p.omzet / maandenCount;
+      let verloop = p.cats.join('');
+      let score = p.cats.reduce((s,c)=>s+(c==='A'?1:c==='B'?2:3),0)/p.cats.length;
+      let voorraad = p.eindvoorraad;
+      let opVoorraad = voorraad>0? "Ja":"Nee";
+      let duur = berekenVoorraadduur(voorraad, gemVerkopen);
+      let duurTekst = Math.round(duur);
+      let kleur = duur < 30 ? 'red' : (duur < 60 ? 'orange':'green');
       return {
-        sku: p.sku,
-        naam: p.naam,
-        variant: p.variant,
-        type: p.type,
-        totaalVerkopen: Number(p.verkocht)||0,
-        gemVerkopen: Number(gemVerkopen.toFixed(2)),
-        totaleOmzet: Number(p.omzet.toFixed(2)),
-        gemOmzet: Number(gemOmzet.toFixed(2)),
-        verloop,
-        gemScore: gemScore===null ? '' : Number(gemScore.toFixed(2)),
-        voorraad,
-        opVoorraad,
-        duurDagen,
-        duurKleur: kleur,
-        avgCat
+        sku:p.sku, naam:p.naam, variant:p.variant, type:p.type, verkopen:p.verkopen,
+        gemVerkopen: gemVerkopen.toFixed(2), omzet:p.omzet.toFixed(2),
+        gemOmzet:gemOmzet.toFixed(2), verloop, score:score.toFixed(2),
+        voorraad, opVoorraad, duurVal: duur, duur:`<span class="${kleur}">${duurTekst}</span>`
       };
     });
 
-    renderTabel(resultaten);
-  } catch (err) {
-    console.error(err);
-    toonError('Er ging iets mis bij het inlezen van het bestand. Controleer de kolomnamen en het bestandstype.');
-  }
-}
-
-function renderTabel(rows) {
-  // producttype dropdown
-  const types = Array.from(new Set(rows.map(r => r.type).filter(Boolean))).sort((a,b)=>a.localeCompare(b));
-  document.getElementById('filterType').innerHTML =
-    '<option value="">Alle</option>' + types.map(t=>`<option value="${t}">${t}</option>`).join('');
-
-  let table;
-  if ($.fn.dataTable.isDataTable('#result')) {
-    table = $('#result').DataTable();
-    table.clear().rows.add(rows).draw();
-  } else {
-    table = $('#result').DataTable({
-      data: rows,
-      deferRender: true,
-      pageLength: 25,
-      lengthMenu: [[25, 50, 100, -1], [25, 50, 100, 'Alle']],
-      order: [[6, 'desc']],     // sorteer op totale omzet
+    let table = $('#result').DataTable({
+      destroy:true,
+      data: resultaten,
       scrollX: true,
+      scrollY: 500,
       scrollCollapse: true,
+      paging: true,
+      lengthMenu: [[10, 25, 50, 100, -1], [10, 25, 50, 100, "Alle"]],
+      dataSrc: "",
       columns: [
-        { data: 'sku' },
-        { data: 'naam' },
-        { data: 'variant' },
-        { data: 'type' },
-        { data: 'totaalVerkopen', className: 'dt-right' },
-        { data: 'gemVerkopen', className: 'dt-right' },
-        { data: 'totaleOmzet', className: 'dt-right', render: (d,t)=> t==='display' ? formatCurrency(d) : d },
-        { data: 'gemOmzet', className: 'dt-right', render: (d,t)=> t==='display' ? formatCurrency(d) : d },
-        { data: 'verloop' },
-        { data: 'gemScore', className: 'dt-right' },
-        { data: 'voorraad', className: 'dt-right' },
-        { data: 'opVoorraad' },
-        { data: 'duurDagen', className: 'dt-right', render: (d,t,row)=>{
-            if (t !== 'display') return d;
-            if (d >= 1e8) return `<span class="pill neutral">∞</span>`;
-            const dagen = Math.round(d);
-            return `<span class="pill ${row.duurKleur}">${dagen}</span>`;
-          }
-        },
-        { data: 'avgCat', visible: false, searchable: true } // helper kolom voor gem. categorie filter
-      ],
-      dom: 'lfrtip'
+        {data:'sku'}, {data:'naam'}, {data:'variant'}, {data:'type'}, {data:'verkopen'}, {data:'gemVerkopen'},
+        {data:'omzet'}, {data:'gemOmzet'}, {data:'verloop'}, {data:'score'},
+        {data:'voorraad'}, {data:'opVoorraad'}, {data:'duur'}
+      ]
     });
-  }
 
-  setupTopScrollbar(table);
-  setupFilters(table);
-}
+    // dropdown producttype vullen
+    let types = [...new Set(resultaten.map(r=>r.type))];
+    $('#filterType').empty().append('<option value="">Alle</option>');
+    types.forEach(t => $('#filterType').append(`<option value="${t}">${t}</option>`));
 
-function setupTopScrollbar(table) {
-  const body = $(table.table().container()).find('div.dataTables_scrollBody')[0];
-  const head = document.getElementById('topScroll');
-  const inner = document.getElementById('topScrollInner');
-  if (!body || !head || !inner) return;
+    // filters
+    $('#filterType').on('change', function(){ table.column(3).search(this.value).draw(); });
+    $('#filterABC').on('change', function(){
+      let val = this.value;
+      if(val) table.column(8).search(val).draw();
+      else table.column(8).search("").draw();
+    });
+    $('#filterStock').on('change', function(){ table.column(11).search(this.value).draw(); });
 
-  function syncWidths() { inner.style.width = body.scrollWidth + 'px'; }
-  function fromTop()    { body.scrollLeft = head.scrollLeft; }
-  function fromBody()   { head.scrollLeft = body.scrollLeft; }
-
-  syncWidths();
-  head.removeEventListener('scroll', fromTop);
-  body.removeEventListener('scroll', fromBody);
-  head.addEventListener('scroll', fromTop, { passive: true });
-  body.addEventListener('scroll', fromBody, { passive: true });
-  window.addEventListener('resize', syncWidths);
-  table.on('draw', syncWidths);
-}
-
-function setupFilters(table) {
-  const catColIndex = 13; // hidden kolom avgCat
-
-  // Verwijder oude custom filters (voorkomt dubbelen na re-upload)
-  $.fn.dataTable.ext.search = $.fn.dataTable.ext.search.filter(f => !f.__isCustomProductSearch && !f.__isCustomDaysFilter);
-
-  // Zoekveld (SKU/naam/variant)
-  const queryInput = document.getElementById('filterQuery');
-  const productSearch = function(settings, data, dataIndex) {
-    const val = (queryInput.value || '').toString().toLowerCase();
-    if (!val) return true;
-    const row = table.row(dataIndex).data();
-    return (row.sku || '').toLowerCase().includes(val)
-        || (row.naam || '').toLowerCase().includes(val)
-        || (row.variant || '').toLowerCase().includes(val);
+    $('#filterDays').on('change', function(){
+      let val = this.value;
+      table.rows().every(function(){
+        let d = this.data();
+        let show = true;
+        if(val==="lt30" && !(d.duurVal < 30)) show=false;
+        if(val==="30to60" && !(d.duurVal>=30 && d.duurVal<=60)) show=false;
+        if(val==="gt60" && !(d.duurVal > 60)) show=false;
+        if(show) $(this.node()).show(); else $(this.node()).hide();
+      });
+    });
   };
-  productSearch.__isCustomProductSearch = true;
-  $.fn.dataTable.ext.search.push(productSearch);
-  queryInput.oninput = () => table.draw();
-
-  // Producttype filter (kolom 3)
-  $('#filterType').off('change').on('change', function(){
-    table.column(3).search(this.value).draw();
-  });
-
-  // ABC filter (gemiddelde categorie) via hidden kolom
-  $('#filterABC').off('change').on('change', function(){
-    table.column(catColIndex).search(this.value).draw();
-  });
-
-  // Op voorraad filter (kolom 11)
-  $('#filterStock').off('change').on('change', function(){
-    table.column(11).search(this.value).draw();
-  });
-
-  // Dagen resterende voorraad (custom)
-  const daysSelect = document.getElementById('filterDays');
-  const daysFilter = function(settings, data, dataIndex) {
-    const val = daysSelect.value;
-    if (!val) return true;
-    const row = table.row(dataIndex).data();
-    const d = row.duurDagen;
-    if (val === 'inf') return d >= 1e8;         // ≈ ∞
-    if (val === '<30') return d < 30;
-    if (val === '30-60') return d >= 30 && d <= 60;
-    if (val === '>60') return d > 60 && d < 1e8;
-    return true;
-  };
-  daysFilter.__isCustomDaysFilter = true;
-  $.fn.dataTable.ext.search.push(daysFilter);
-  daysSelect.onchange = () => table.draw();
+  reader.readAsArrayBuffer(file);
 }
 </script>
 </body>
