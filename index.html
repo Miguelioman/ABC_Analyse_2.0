@@ -1,99 +1,275 @@
 <!DOCTYPE html>
 <html lang="nl">
 <head>
-  <meta charset="UTF-8">
-  <title>ABC Analyse Dashboard</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 20px; }
-    table { border-collapse: collapse; width: 100%; margin-top: 20px; }
-    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-    th { background-color: #f2f2f2; }
-    .highlight { font-weight: bold; color: darkblue; }
-  </style>
+<meta charset="UTF-8">
+<title>ABC Analyse Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+body { font-family: Arial, sans-serif; margin: 20px; }
+.hidden { display: none; }
+h2 { margin-top: 30px; }
+table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+th, td { border: 1px solid #ccc; padding: 6px; text-align: left; }
+th { background: #eee; }
+.filter-container { margin-top: 10px; }
+#monthsOverview { margin-top: 10px; font-weight: bold; }
+.chart-container { width: 600px; margin-top: 20px; }
+#uploadBtn {
+  background-color: #007bff;
+  color: white;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+#uploadBtn:hover {
+  background-color: #0056b3;
+}
+</style>
 </head>
 <body>
-  <h1>ABC Analyse Dashboard</h1>
-  <p>Upload één Excelbestand met meerdere maand-sheets (sheetnaam = maand, bijv. 02-2025, 03-2025, etc.).</p>
-  
-  <input type="file" id="uploadExcel" />
-  <button onclick="processExcel()">Upload en verwerk Excel</button>
 
-  <p><span class="highlight">Geïmporteerde maanden:</span> <span id="monthsList"></span></p>
+<h1>ABC Analyse Dashboard</h1>
+<p>Upload één Excelbestand met meerdere maand-sheets (sheetnaam = maand, bijv. 02-2025, 03-2025, etc.).</p>
 
+<button id="uploadBtn" type="button">Upload en verwerk Excel</button>
+<input type="file" id="excelFile" accept=".xlsx,.xls" style="display:none">
+
+<div id="monthsOverview"></div>
+
+<div id="mainContent" class="hidden">
   <h2>Hoofdoverzicht</h2>
-  <table id="overviewTable">
-    <thead>
-      <tr id="tableHeader"></tr>
-    </thead>
-    <tbody id="tableBody"></tbody>
-  </table>
+  <div class="filter-container">
+    <label>Filter producttype: <select id="filterType"><option value="">Alle</option></select></label>
+    <label>Filter categorie: 
+      <select id="filterCat">
+        <option value="">Alle</option>
+        <option value="A">A</option>
+        <option value="B">B</option>
+        <option value="C">C</option>
+      </select>
+    </label>
+    <label>Op voorraad: 
+      <select id="filterStock">
+        <option value="">Alle</option>
+        <option value="ja">Ja</option>
+        <option value="nee">Nee</option>
+      </select>
+    </label>
+    <label>Zoek: <input type="text" id="searchInput"></label>
+  </div>
+  <table id="mainTable"></table>
 
-  <script>
-    let excelData = {};
+  <h2>Top/Bottom verkopers (instelbaar)</h2>
+  <label>Aantal: <input type="number" id="topCount" value="10" min="1"></label>
+  <label>Weergave: 
+    <select id="topBottomSelect">
+      <option value="top">Top</option>
+      <option value="bottom">Bottom</option>
+    </select>
+  </label>
+  <label>Filter producttype: <select id="filterTypeTop"><option value="">Alle</option></select></label>
+  <label>Op voorraad: 
+    <select id="filterStockTop">
+      <option value="">Alle</option>
+      <option value="ja">Ja</option>
+      <option value="nee">Nee</option>
+    </select>
+  </label>
+  <table id="topBottomTable"></table>
 
-    function processExcel() {
-      const fileInput = document.getElementById("uploadExcel").files[0];
-      if (!fileInput) {
-        alert("Upload eerst een Excelbestand!");
-        return;
+  <h2>Charts</h2>
+  <label>Filter producttype: <select id="filterTypeChart"><option value="">Alle</option></select></label>
+  <div class="chart-container">
+    <canvas id="pieChart"></canvas>
+  </div>
+  <div class="chart-container">
+    <canvas id="trendChart"></canvas>
+  </div>
+</div>
+
+<script>
+let allData = {};
+let months = [];
+
+// Upload knop
+document.getElementById("uploadBtn").addEventListener("click", () => {
+  document.getElementById("excelFile").click();
+});
+
+document.getElementById("excelFile").addEventListener("change", handleExcelUpload);
+
+function handleExcelUpload(evt) {
+  const file = evt.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const workbook = XLSX.read(e.target.result, {type: 'binary'});
+    months = [];
+    allData = {};
+    workbook.SheetNames.forEach(sheetName => {
+      const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+      if (sheetData.length > 0) {
+        const month = sheetName.trim();
+        months.push(month);
+        allData[month] = processMonthData(sheetData);
       }
+    });
+    months.sort((a,b) => {
+      const [ma, ya] = a.split('-').map(Number);
+      const [mb, yb] = b.split('-').map(Number);
+      return yb === ya ? ma - mb : ya - yb;
+    });
+    document.getElementById("monthsOverview").textContent = "📅 Geïmporteerde maanden: " + months.join(', ');
+    document.getElementById("mainContent").classList.remove("hidden");
+    buildMainTable();
+    buildTopBottomTable();
+    buildCharts();
+    fillProductTypeFilters();
+  };
+  reader.readAsBinaryString(file);
+}
 
-      const reader = new FileReader();
-      reader.onload = function(e) {
-        const data = new Uint8Array(e.target.result);
-        const workbook = XLSX.read(data, { type: "array" });
+function normalizeType(type) {
+  if (!type) return '';
+  return type.trim().toLowerCase().replace(/\s+/g, ' ')
+             .replace(/(^|\s)\S/g, l => l.toUpperCase());
+}
 
-        let months = [];
-        excelData = {};
+function processMonthData(data) {
+  data.forEach(row => {
+    row.Producttype = normalizeType(row["Product type"]);
+    row.Verkocht = Number(row["Inventory units sold"]) || 0;
+    const voorraad = Number(row["Ending inventory units"]) || 0;
+    row.OpVoorraad = voorraad > 0 ? "ja" : "nee";
+  });
+  const sorted = [...data].sort((a,b) => b.Verkocht - a.Verkocht);
+  let total = sorted.reduce((sum,r) => sum + r.Verkocht, 0);
+  let cum = 0;
+  sorted.forEach(r => {
+    cum += r.Verkocht;
+    let pct = total > 0 ? cum / total * 100 : 0;
+    r.Categorie = pct <= 80 ? 'A' : pct <= 95 ? 'B' : 'C';
+  });
+  return sorted;
+}
 
-        workbook.SheetNames.forEach(sheetName => {
-          const sheet = workbook.Sheets[sheetName];
-          const json = XLSX.utils.sheet_to_json(sheet, { defval: "" });
-          excelData[sheetName] = json;
-          months.push(sheetName);
-        });
+function buildMainTable() {
+  const table = document.getElementById("mainTable");
+  const filterType = document.getElementById("filterType").value;
+  const filterCat = document.getElementById("filterCat").value;
+  const filterStock = document.getElementById("filterStock").value;
+  const search = document.getElementById("searchInput").value.toLowerCase();
 
-        document.getElementById("monthsList").textContent = months.join(", ");
-        
-        // Vul tabel met data van de eerste maand
-        if (months.length > 0) {
-          fillTable(excelData[months[0]]);
-        }
-      };
-      reader.readAsArrayBuffer(fileInput);
+  let rows = Object.values(allData).flat();
+  if (filterType) rows = rows.filter(r => r.Producttype === filterType);
+  if (filterCat) rows = rows.filter(r => r.Categorie === filterCat);
+  if (filterStock) rows = rows.filter(r => r.OpVoorraad === filterStock);
+  if (search) rows = rows.filter(r => (r["Product title"] || "").toLowerCase().includes(search));
+
+  let html = "<tr><th>Product</th><th>Type</th><th>Categorie</th><th>Verkocht</th><th>Op voorraad</th></tr>";
+  rows.forEach(r => {
+    html += `<tr>
+      <td>${r["Product title"]}</td>
+      <td>${r.Producttype}</td>
+      <td>${r.Categorie}</td>
+      <td>${r.Verkocht}</td>
+      <td>${r.OpVoorraad}</td>
+    </tr>`;
+  });
+  table.innerHTML = html;
+}
+
+function buildTopBottomTable() {
+  const table = document.getElementById("topBottomTable");
+  const count = parseInt(document.getElementById("topCount").value) || 10;
+  const mode = document.getElementById("topBottomSelect").value;
+  const filterType = document.getElementById("filterTypeTop").value;
+  const filterStock = document.getElementById("filterStockTop").value;
+
+  let rows = Object.values(allData).flat();
+  if (filterType) rows = rows.filter(r => r.Producttype === filterType);
+  if (filterStock) rows = rows.filter(r => r.OpVoorraad === filterStock);
+
+  rows.sort((a,b) => mode === "top" ? b.Verkocht - a.Verkocht : a.Verkocht - b.Verkocht);
+  rows = rows.slice(0, count);
+
+  let html = "<tr><th>Product</th><th>Type</th><th>Verkocht</th></tr>";
+  rows.forEach(r => {
+    html += `<tr>
+      <td>${r["Product title"]}</td>
+      <td>${r.Producttype}</td>
+      <td>${r.Verkocht}</td>
+    </tr>`;
+  });
+  table.innerHTML = html;
+}
+
+function buildCharts() {
+  const ctxPie = document.getElementById("pieChart").getContext("2d");
+  const ctxTrend = document.getElementById("trendChart").getContext("2d");
+  const filterType = document.getElementById("filterTypeChart").value;
+
+  let rows = Object.values(allData).flat();
+  if (filterType) rows = rows.filter(r => r.Producttype === filterType);
+
+  const catCount = {A:0, B:0, C:0};
+  rows.forEach(r => { catCount[r.Categorie]++; });
+
+  new Chart(ctxPie, {
+    type: 'pie',
+    data: {
+      labels: ['A','B','C'],
+      datasets: [{
+        data: [catCount.A, catCount.B, catCount.C],
+        backgroundColor: ['#4caf50','#ff9800','#f44336']
+      }]
     }
+  });
 
-    function fillTable(data) {
-      const headerRow = document.getElementById("tableHeader");
-      const body = document.getElementById("tableBody");
-      headerRow.innerHTML = "";
-      body.innerHTML = "";
+  const monthSales = {};
+  months.forEach(m => { monthSales[m] = 0; });
+  months.forEach(m => {
+    allData[m].forEach(r => { monthSales[m] += r.Verkocht; });
+  });
 
-      if (data.length === 0) {
-        body.innerHTML = "<tr><td colspan='10'>Geen data gevonden in Excel</td></tr>";
-        return;
-      }
-
-      // Maak dynamische kolomheaders
-      const columns = Object.keys(data[0]);
-      columns.forEach(col => {
-        const th = document.createElement("th");
-        th.textContent = col;
-        headerRow.appendChild(th);
-      });
-
-      // Voeg data toe
-      data.forEach(row => {
-        const tr = document.createElement("tr");
-        columns.forEach(col => {
-          const td = document.createElement("td");
-          td.textContent = row[col];
-          tr.appendChild(td);
-        });
-        body.appendChild(tr);
-      });
+  new Chart(ctxTrend, {
+    type: 'line',
+    data: {
+      labels: months,
+      datasets: [{
+        label: 'Totale verkoop',
+        data: months.map(m => monthSales[m]),
+        fill: false,
+        borderColor: 'blue'
+      }]
     }
-  </script>
+  });
+}
+
+function fillProductTypeFilters() {
+  const types = new Set();
+  Object.values(allData).flat().forEach(r => types.add(r.Producttype));
+  const sortedTypes = [...types].sort();
+  ['filterType','filterTypeTop','filterTypeChart'].forEach(id => {
+    const sel = document.getElementById(id);
+    sel.innerHTML = '<option value="">Alle</option>';
+    sortedTypes.forEach(t => {
+      sel.innerHTML += `<option value="${t}">${t}</option>`;
+    });
+  });
+}
+
+// Filters opnieuw laden bij wijziging
+['filterType','filterCat','filterStock','searchInput'].forEach(id => {
+  document.getElementById(id).addEventListener('input', buildMainTable);
+});
+['topCount','topBottomSelect','filterTypeTop','filterStockTop'].forEach(id => {
+  document.getElementById(id).addEventListener('input', buildTopBottomTable);
+});
+document.getElementById('filterTypeChart').addEventListener('input', buildCharts);
+</script>
+
 </body>
 </html>
