@@ -14,12 +14,23 @@
     .green { background-color: #d4edda; }
     .filters { margin-bottom: 15px; }
     .filters label { margin-right: 15px; }
-    div.dataTables_wrapper div.dataTables_scrollHead {
-      overflow: auto;
-      position: relative;
+
+    /* Scrollbar bovenaan */
+    div.dataTables_scrollHead {
+      overflow-x: auto !important;
+      overflow-y: hidden !important;
     }
-    div.dataTables_wrapper div.dataTables_scrollHead table {
+    div.dataTables_scrollHead table {
       margin-bottom: 0 !important;
+    }
+    div.dataTables_scrollBody {
+      overflow-x: hidden !important;
+    }
+
+    table.dataTable tbody td {
+      white-space: nowrap;
+      font-size: 13px;
+      padding: 4px 8px;
     }
   </style>
 </head>
@@ -156,7 +167,7 @@ function handleFile(e) {
       let voorraad = p.eindvoorraad;
       let opVoorraad = voorraad>0? "Ja":"Nee";
       let duur = berekenVoorraadduur(voorraad, gemVerkopen);
-      let duurTekst = Math.round(duur);
+      let duurTekst = (duur===Infinity? "∞" : Math.round(duur));
       let kleur = duur < 30 ? 'red' : (duur < 60 ? 'orange':'green');
       return {
         sku:p.sku, naam:p.naam, variant:p.variant, type:p.type, verkopen:p.verkopen,
@@ -170,11 +181,10 @@ function handleFile(e) {
       destroy:true,
       data: resultaten,
       scrollX: true,
-      scrollY: 500,
+      scrollY: 400,
       scrollCollapse: true,
       paging: true,
       lengthMenu: [[10, 25, 50, 100, -1], [10, 25, 50, 100, "Alle"]],
-      dataSrc: "",
       columns: [
         {data:'sku'}, {data:'naam'}, {data:'variant'}, {data:'type'}, {data:'verkopen'}, {data:'gemVerkopen'},
         {data:'omzet'}, {data:'gemOmzet'}, {data:'verloop'}, {data:'score'},
@@ -196,17 +206,17 @@ function handleFile(e) {
     });
     $('#filterStock').on('change', function(){ table.column(11).search(this.value).draw(); });
 
-    $('#filterDays').on('change', function(){
-      let val = this.value;
-      table.rows().every(function(){
-        let d = this.data();
-        let show = true;
-        if(val==="lt30" && !(d.duurVal < 30)) show=false;
-        if(val==="30to60" && !(d.duurVal>=30 && d.duurVal<=60)) show=false;
-        if(val==="gt60" && !(d.duurVal > 60)) show=false;
-        if(show) $(this.node()).show(); else $(this.node()).hide();
-      });
-    });
+    $.fn.dataTable.ext.search.push(
+      function(settings, data, dataIndex) {
+        let filter = $('#filterDays').val();
+        let duurVal = resultaten[dataIndex].duurVal;
+        if(filter==="lt30" && !(duurVal < 30)) return false;
+        if(filter==="30to60" && !(duurVal>=30 && duurVal<=60)) return false;
+        if(filter==="gt60" && !(duurVal > 60)) return false;
+        return true;
+      }
+    );
+    $('#filterDays').on('change', function(){ table.draw(); });
   };
   reader.readAsArrayBuffer(file);
 }
