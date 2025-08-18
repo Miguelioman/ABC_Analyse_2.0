@@ -1,240 +1,99 @@
 <!DOCTYPE html>
 <html lang="nl">
 <head>
-<meta charset="UTF-8" />
-<title>ABC Analyse Dashboard</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<style>
-  :root { --bg:#fff; --text:#222; --muted:#666; --line:#ddd; --th:#f3f3f3; }
-  body { font-family: system-ui, Arial, sans-serif; margin: 20px; color: var(--text); background: var(--bg); }
-  h1 { margin: 0 0 8px; }
-  .muted { color: var(--muted); }
-  .hidden { display: none; }
-  .controls { display:flex; gap:12px; flex-wrap: wrap; align-items: center; margin: 12px 0 16px; }
-  button, select, input[type="number"] { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: #0d6efd; color: #fff; cursor: pointer; }
-  select, input[type="number"] { background:#fff; color:var(--text); }
-  button:hover { filter: brightness(0.95); }
-  .section { margin-top: 28px; }
-  table { border-collapse: collapse; width: 100%; margin-top: 10px; }
-  th, td { border: 1px solid var(--line); padding: 8px; text-align: left; vertical-align: top; }
-  th { background: var(--th); cursor: pointer; position: sticky; top: 0; z-index: 1; }
-  th .sort { font-size: 11px; color: var(--muted); margin-left: 6px; }
-  .kpi { display:flex; gap:18px; flex-wrap: wrap; }
-  .kpi .card { padding: 10px 12px; border:1px solid var(--line); border-radius: 10px; background:#fafafa; }
-  .chart-container { width: 100%; max-width: 800px; margin-top: 12px; }
-  .label { padding: 3px 8px; border-radius: 999px; color: #fff; font-weight: 600; display: inline-block; }
-  .label-green { background-color: #12b886; }
-  .label-orange { background-color: #f59f00; }
-  .label-red { background-color: #e03131; }
-  .nowrap { white-space: nowrap; }
-  .small { font-size: 12px; color: var(--muted); }
-</style>
+  <meta charset="UTF-8">
+  <title>ABC Analyse Dashboard</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    th { background-color: #f2f2f2; }
+    .highlight { font-weight: bold; color: darkblue; }
+  </style>
 </head>
 <body>
   <h1>ABC Analyse Dashboard</h1>
-  <p class="muted">Upload één Excelbestand met meerdere maand-sheets (sheetnaam = <code>MM-YYYY</code>, bijv. <code>02-2025</code>, <code>03-2025</code>, ...).</p>
+  <p>Upload één Excelbestand met meerdere maand-sheets (sheetnaam = maand, bijv. 02-2025, 03-2025, etc.).</p>
+  
+  <input type="file" id="uploadExcel" />
+  <button onclick="processExcel()">Upload en verwerk Excel</button>
 
-  <div class="controls">
-    <button id="uploadBtn">Upload en verwerk Excel</button>
-    <input type="file" id="excelFile" accept=".xlsx,.xls" style="display:none" />
-    <span id="monthsOverview" class="muted"></span>
-  </div>
+  <p><span class="highlight">Geïmporteerde maanden:</span> <span id="monthsList"></span></p>
 
-  <div id="mainContent" class="hidden">
-    <div class="kpi">
-      <div class="card">Totaal omzet: <strong id="kpiOmzet">-</strong></div>
-      <div class="card">Totaal stuks verkocht: <strong id="kpiStuks">-</strong></div>
-      <div class="card">Unieke SKU’s: <strong id="kpiSkus">-</strong></div>
-      <div class="card">Maanden: <strong id="kpiMonths">-</strong></div>
-    </div>
+  <h2>Hoofdoverzicht</h2>
+  <table id="overviewTable">
+    <thead>
+      <tr id="tableHeader"></tr>
+    </thead>
+    <tbody id="tableBody"></tbody>
+  </table>
 
-    <div class="section">
-      <h2>Hoofdoverzicht</h2>
-      <table id="mainTable"></table>
-    </div>
+  <script>
+    let excelData = {};
 
-    <div class="section">
-      <h2>Top/Bottom verkopers</h2>
-      <div class="controls">
-        <label class="small">Aantal:
-          <input type="number" id="topCount" value="10" min="1" />
-        </label>
-        <label class="small">Weergave:
-          <select id="topBottomSelect">
-            <option value="top">Top</option>
-            <option value="bottom">Bottom</option>
-          </select>
-        </label>
-      </div>
-      <table id="topBottomTable"></table>
-    </div>
+    function processExcel() {
+      const fileInput = document.getElementById("uploadExcel").files[0];
+      if (!fileInput) {
+        alert("Upload eerst een Excelbestand!");
+        return;
+      }
 
-    <div class="section">
-      <h2>Advies: Bij te halen</h2>
-      <div class="controls">
-        <label class="small">Weergave:
-          <select id="bijTeHalenSelect">
-            <option value="10">Top 10</option>
-            <option value="20">Top 20</option>
-            <option value="30">Top 30</option>
-          </select>
-        </label>
-        <label class="small">Filter producttype:
-          <select id="filterBijTeHalen"><option value="">Alle</option></select>
-        </label>
-      </div>
-      <table id="bijTeHalenTable"></table>
-    </div>
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: "array" });
 
-    <div class="section">
-      <h2>Advies: Outlet</h2>
-      <div class="controls">
-        <label class="small">Weergave:
-          <select id="outletSelect">
-            <option value="10">Top 10</option>
-            <option value="20">Top 20</option>
-            <option value="30">Top 30</option>
-          </select>
-        </label>
-        <label class="small">Filter producttype:
-          <select id="filterOutlet"><option value="">Alle</option></select>
-        </label>
-      </div>
-      <table id="outletTable"></table>
-    </div>
+        let months = [];
+        excelData = {};
 
-    <div class="section">
-      <h2>Charts</h2>
-      <div class="chart-container"><canvas id="pieChart" height="220"></canvas></div>
-      <div class="chart-container"><canvas id="trendChart" height="260"></canvas></div>
-    </div>
-  </div>
+        workbook.SheetNames.forEach(sheetName => {
+          const sheet = workbook.Sheets[sheetName];
+          const json = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+          excelData[sheetName] = json;
+          months.push(sheetName);
+        });
 
-<script>
-/* ----------------------- Config & Helpers ----------------------- */
-// ... (helpers identiek als bij jou)
-
-const PRICE_MAP = {
-  'sokken': 10.95, 'sok': 10.95,
-  'compressiesokken': 29.99, 'compressiekous': 29.99, 'compressiekousen': 29.99,
-  'schoenen': 79.99, 'schoen': 79.99,
-  'mokken': 14.95, 'mok': 14.95,
-  'sneakers': 99.99, 'sneaker': 99.99
-};
-
-let months = [];
-let monthData = {};
-let master = {};
-let charts = { pie:null, trend:null };
-
-const el = id => document.getElementById(id);
-
-// (helpers functies blijven hetzelfde...)
-
-const COLS = {
-  sku: ['Product variant SKU','Variant SKU','SKU','Product SKU','Productvariant SKU','Product variant sku','sku'],
-  name: ['Product title','Title','Naam','Productnaam','Product name'],
-  type: ['Product type','Type','Producttype','Product Type'],
-  begin: ['Beginvoorraad','Begin voorraad','Opening stock','Startvoorraad','Opening quantity','Inventory quantity begin','Begin qty'],
-  end: ['Eindvoorraad','Voorraad','Stock','Closing stock','Inventory quantity','Eind voorraad','Quantity'],
-  sold: ['Verkocht','Units sold','Sold','Inventory units sold','Aantal verkocht','Verkoop stuks']
-};
-
-el("uploadBtn").addEventListener("click", () => el("excelFile").click());
-el("excelFile").addEventListener("change", onExcelChosen);
-
-async function onExcelChosen(e) {
-  const file = e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = ev => {
-    const wb = XLSX.read(ev.target.result, { type: 'binary' });
-    months = [];
-    monthData = {};
-    master = {};
-
-    wb.SheetNames.forEach(sn => {
-      const sheet = wb.Sheets[sn];
-      if (!sheet) return;
-      const rows = XLSX.utils.sheet_to_json(sheet, { defval: null, raw: true });
-      if (!rows.length) return;
-
-      const month = String(sn).trim();
-      months.push(month);
-
-      const standardized = rows.map(r => ({
-        sku: pick(r, COLS.sku),
-        name: pick(r, COLS.name),
-        type: pick(r, COLS.type),
-        begin: pick(r, COLS.begin),
-        end: pick(r, COLS.end),
-        sold: pick(r, COLS.sold)
-      }));
-
-      // FIX: neem alle rijen met SKU mee (geen filter meer op beginvoorraad > 0)
-      const filtered = standardized.filter(r => r.sku);
-
-      // ... (rest van verwerking blijft gelijk)
-      const bySku = new Map();
-      for (const r of filtered) {
-        const key = String(r.sku);
-        if (!bySku.has(key)) {
-          bySku.set(key, {
-            month, sku: key, name: r.name ?? '', type: r.type ?? '',
-            begin: 0, end: 0, sold: 0, price: 0, revenue: 0, category: 'C'
-          });
+        document.getElementById("monthsList").textContent = months.join(", ");
+        
+        // Vul tabel met data van de eerste maand
+        if (months.length > 0) {
+          fillTable(excelData[months[0]]);
         }
-        const o = bySku.get(key);
-        o.begin += getNum(r.begin);
-        o.end += getNum(r.end);
-        o.sold += getNum(r.sold);
-        if (!o.name && r.name) o.name = r.name;
-        if (!o.type && r.type) o.type = r.type;
+      };
+      reader.readAsArrayBuffer(fileInput);
+    }
+
+    function fillTable(data) {
+      const headerRow = document.getElementById("tableHeader");
+      const body = document.getElementById("tableBody");
+      headerRow.innerHTML = "";
+      body.innerHTML = "";
+
+      if (data.length === 0) {
+        body.innerHTML = "<tr><td colspan='10'>Geen data gevonden in Excel</td></tr>";
+        return;
       }
 
-      for (const o of bySku.values()) {
-        const t = normalizeTypeForPrice(o.type);
-        o.price = PRICE_MAP[t] || 0;
-        o.revenue = o.sold * o.price;
-      }
+      // Maak dynamische kolomheaders
+      const columns = Object.keys(data[0]);
+      columns.forEach(col => {
+        const th = document.createElement("th");
+        th.textContent = col;
+        headerRow.appendChild(th);
+      });
 
-      const items = Array.from(bySku.values()).sort((a,b) => b.revenue - a.revenue);
-      const totalRev = items.reduce((s,x)=>s+x.revenue,0);
-      let cum = 0;
-      for (const it of items) {
-        cum += it.revenue;
-        const pct = totalRev > 0 ? (cum/totalRev)*100 : 0;
-        it.category = pct <= 80 ? 'A' : (pct <= 95 ? 'B' : 'C');
-      }
-
-      monthData[month] = items;
-    });
-
-    months.sort(monthSort);
-    buildMaster();
-    // ... (UI vullen blijft hetzelfde)
-    el("monthsOverview").textContent = months.length
-      ? `📅 Geïmporteerde maanden: ${months.join(', ')}`
-      : 'Geen geldige sheets gevonden.';
-    el("mainContent").classList.remove("hidden");
-    const totalRevenue = Object.values(master).reduce((s,p)=>s+p.totalRevenue,0);
-    const totalSold = Object.values(master).reduce((s,p)=>s+p.totalSold,0);
-    el("kpiOmzet").textContent = `€ ${fmt(totalRevenue)}`;
-    el("kpiStuks").textContent = fmt(totalSold, 0);
-    el("kpiSkus").textContent = Object.keys(master).length;
-    el("kpiMonths").textContent = months.length;
-    buildMainTable();
-    buildTopBottomTable();
-    fillAdviceFilters();
-    buildAdviceTables();
-    buildCharts();
-  };
-  reader.readAsBinaryString(file);
-}
-
-// ... (rest van functies ongewijzigd: buildMaster, renderTable, buildMainTable, buildTopBottomTable, buildAdviceTables, buildCharts)
-</script>
+      // Voeg data toe
+      data.forEach(row => {
+        const tr = document.createElement("tr");
+        columns.forEach(col => {
+          const td = document.createElement("td");
+          td.textContent = row[col];
+          tr.appendChild(td);
+        });
+        body.appendChild(tr);
+      });
+    }
+  </script>
 </body>
 </html>
