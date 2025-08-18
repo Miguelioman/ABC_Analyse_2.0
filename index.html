@@ -40,6 +40,12 @@
   <p><strong>Geïmporteerde maanden:</strong> <span id="months"></span></p>
 
   <div class="filters">
+    <label>Analyse op producttype:
+      <select id="analyseType"><option value="">Alle</option></select>
+    </label>
+  </div>
+
+  <div class="filters">
     <label>Filter producttype:
       <select id="filterType"><option value="">Alle</option></select>
     </label>
@@ -90,6 +96,9 @@ const prijzen = {
   'mokken': 14.99
 };
 
+let workbookGlobal = null;
+let maandenGlobal = [];
+
 function abcAnalyse(producten) {
   let totaalOmzet = producten.reduce((s, p) => s + p.omzet, 0);
   producten.sort((a, b) => b.omzet - a.omzet);
@@ -116,109 +125,137 @@ function handleFile(e) {
   const reader = new FileReader();
   reader.onload = function(evt) {
     const data = new Uint8Array(evt.target.result);
-    const workbook = XLSX.read(data, {type: 'array'});
-    const maanden = workbook.SheetNames;
-    document.getElementById('months').innerText = maanden.join(', ');
+    workbookGlobal = XLSX.read(data, {type: 'array'});
+    maandenGlobal = workbookGlobal.SheetNames;
+    document.getElementById('months').innerText = maandenGlobal.join(', ');
 
-    let productenMap = {};
-
-    maanden.forEach((maand) => {
-      let sheet = XLSX.utils.sheet_to_json(workbook.Sheets[maand]);
-      // filter beginvoorraad = 0
-      sheet = sheet.filter(r => r["Starting inventory units"] > 0);
-      let producten = {};
+    // vul analyseType dropdown
+    let alleTypes = new Set();
+    maandenGlobal.forEach(maand => {
+      let sheet = XLSX.utils.sheet_to_json(workbookGlobal.Sheets[maand]);
       sheet.forEach(r => {
-        let prijs = prijzen[(r["Product type"]||'').toLowerCase()] || 0;
-        let omzet = r["Inventory units sold"] * prijs;
-        let sku = r["Product variant SKU"];
-        if (!producten[sku]) {
-          producten[sku] = {
-            sku: sku,
-            naam: r["Product title"],
-            variant: r["Product variant title"],
-            type: r["Product type"],
-            verkocht: 0,
-            omzet: 0,
-            eindvoorraad: r["Ending inventory units"]
-          };
-        }
-        producten[sku].verkocht += r["Inventory units sold"];
-        producten[sku].omzet += omzet;
-        producten[sku].eindvoorraad = r["Ending inventory units"];
-      });
-      let arr = abcAnalyse(Object.values(producten));
-      arr.forEach(p => {
-        if (!productenMap[p.sku]) {
-          productenMap[p.sku] = {sku: p.sku, naam: p.naam, variant:p.variant, type: p.type, verkopen:0, omzet:0, cats:[], eindvoorraad:p.eindvoorraad};
-        }
-        productenMap[p.sku].verkopen += p.verkocht;
-        productenMap[p.sku].omzet += p.omzet;
-        productenMap[p.sku].cats.push(p.cat);
-        productenMap[p.sku].eindvoorraad = p.eindvoorraad;
+        let typeRaw = (r["Product type"] || '').trim().toLowerCase();
+        if (typeRaw === "sokken") typeRaw = "sokken"; 
+        alleTypes.add(typeRaw.charAt(0).toUpperCase() + typeRaw.slice(1));
       });
     });
+    $('#analyseType').empty().append('<option value="">Alle</option>');
+    [...alleTypes].forEach(t => $('#analyseType').append(`<option value="${t}">${t}</option>`));
 
-    let resultaten = Object.values(productenMap).map(p => {
-      let maandenCount = maanden.length;
-      let gemVerkopen = p.verkopen / maandenCount;
-      let gemOmzet = p.omzet / maandenCount;
-      let verloop = p.cats.join('');
-      let score = p.cats.reduce((s,c)=>s+(c==='A'?1:c==='B'?2:3),0)/p.cats.length;
-      let voorraad = p.eindvoorraad;
-      let opVoorraad = voorraad>0? "Ja":"Nee";
-      let duur = berekenVoorraadduur(voorraad, gemVerkopen);
-      let duurTekst = (duur===Infinity? "∞" : Math.round(duur));
-      let kleur = duur < 30 ? 'red' : (duur < 60 ? 'orange':'green');
-      return {
-        sku:p.sku, naam:p.naam, variant:p.variant, type:p.type, verkopen:p.verkopen,
-        gemVerkopen: gemVerkopen.toFixed(2), omzet:p.omzet.toFixed(2),
-        gemOmzet:gemOmzet.toFixed(2), verloop, score:score.toFixed(2),
-        voorraad, opVoorraad, duurVal: duur, duur:`<span class="${kleur}">${duurTekst}</span>`
-      };
-    });
-
-    let table = $('#result').DataTable({
-      destroy:true,
-      data: resultaten,
-      scrollX: true,
-      scrollY: 400,
-      scrollCollapse: true,
-      paging: true,
-      lengthMenu: [[10, 25, 50, 100, -1], [10, 25, 50, 100, "Alle"]],
-      columns: [
-        {data:'sku'}, {data:'naam'}, {data:'variant'}, {data:'type'}, {data:'verkopen'}, {data:'gemVerkopen'},
-        {data:'omzet'}, {data:'gemOmzet'}, {data:'verloop'}, {data:'score'},
-        {data:'voorraad'}, {data:'opVoorraad'}, {data:'duur'}
-      ]
-    });
-
-    // dropdown producttype vullen
-    let types = [...new Set(resultaten.map(r=>r.type))];
-    $('#filterType').empty().append('<option value="">Alle</option>');
-    types.forEach(t => $('#filterType').append(`<option value="${t}">${t}</option>`));
-
-    // filters
-    $('#filterType').on('change', function(){ table.column(3).search(this.value).draw(); });
-    $('#filterABC').on('change', function(){
-      let val = this.value;
-      if(val) table.column(8).search(val).draw();
-      else table.column(8).search("").draw();
-    });
-    $('#filterStock').on('change', function(){ table.column(11).search(this.value).draw(); });
-
-    $.fn.dataTable.ext.search.push(
-      function(settings, data, dataIndex) {
-        let filter = $('#filterDays').val();
-        let duurVal = resultaten[dataIndex].duurVal;
-        if(filter==="lt30" && !(duurVal < 30)) return false;
-        if(filter==="30to60" && !(duurVal>=30 && duurVal<=60)) return false;
-        if(filter==="gt60" && !(duurVal > 60)) return false;
-        return true;
-      }
-    );
-    $('#filterDays').on('change', function(){ table.draw(); });
+    runAnalyse();
   };
   reader.readAsArrayBuffer(file);
+}
+
+$('#analyseType').on('change', runAnalyse);
+
+function runAnalyse() {
+  if (!workbookGlobal) return;
+  let analyseFilter = $('#analyseType').val();
+
+  let productenMap = {};
+  maandenGlobal.forEach((maand) => {
+    let sheet = XLSX.utils.sheet_to_json(workbookGlobal.Sheets[maand]);
+    sheet = sheet.filter(r => r["Starting inventory units"] > 0);
+    let producten = {};
+    sheet.forEach(r => {
+      let typeRaw = (r["Product type"] || '').trim().toLowerCase();
+      if (typeRaw === "sokken") typeRaw = "sokken"; 
+      let prijs = prijzen[typeRaw] || 0;
+      let omzet = r["Inventory units sold"] * prijs;
+      let sku = r["Product variant SKU"];
+      let typeNorm = typeRaw.charAt(0).toUpperCase() + typeRaw.slice(1);
+
+      // filter globale analyse
+      if (analyseFilter && typeNorm !== analyseFilter) return;
+
+      if (!producten[sku]) {
+        producten[sku] = {
+          sku: sku,
+          naam: r["Product title"],
+          variant: r["Product variant title"],
+          type: typeNorm,
+          verkocht: 0,
+          omzet: 0,
+          eindvoorraad: r["Ending inventory units"]
+        };
+      }
+      producten[sku].verkocht += r["Inventory units sold"];
+      producten[sku].omzet += omzet;
+      producten[sku].eindvoorraad = r["Ending inventory units"];
+    });
+    let arr = abcAnalyse(Object.values(producten));
+    arr.forEach(p => {
+      if (!productenMap[p.sku]) {
+        productenMap[p.sku] = {sku: p.sku, naam: p.naam, variant:p.variant, type: p.type, verkopen:0, omzet:0, cats:[], eindvoorraad:p.eindvoorraad};
+      }
+      productenMap[p.sku].verkopen += p.verkocht;
+      productenMap[p.sku].omzet += p.omzet;
+      productenMap[p.sku].cats.push(p.cat);
+      productenMap[p.sku].eindvoorraad = p.eindvoorraad;
+    });
+  });
+
+  let resultaten = Object.values(productenMap).map(p => {
+    let maandenCount = maandenGlobal.length;
+    let gemVerkopen = p.verkopen / maandenCount;
+    let gemOmzet = p.omzet / maandenCount;
+    let verloop = p.cats.join('');
+    let score = p.cats.reduce((s,c)=>s+(c==='A'?1:c==='B'?2:3),0)/p.cats.length;
+    let voorraad = p.eindvoorraad;
+    let opVoorraad = voorraad>0? "Ja":"Nee";
+    let duur = berekenVoorraadduur(voorraad, gemVerkopen);
+    let duurTekst = (duur===Infinity? "∞" : Math.round(duur));
+    let kleur = duur < 30 ? 'red' : (duur < 60 ? 'orange':'green');
+    return {
+      sku:p.sku, naam:p.naam, variant:p.variant, type:p.type, verkopen:p.verkopen,
+      gemVerkopen: gemVerkopen.toFixed(2), omzet:p.omzet.toFixed(2),
+      gemOmzet:gemOmzet.toFixed(2), verloop, score:score.toFixed(2),
+      voorraad, opVoorraad, duurVal: duur, duur:`<span class="${kleur}">${duurTekst}</span>`
+    };
+  });
+
+  let table = $('#result').DataTable({
+    destroy:true,
+    data: resultaten,
+    scrollX: true,
+    scrollY: 400,
+    scrollCollapse: true,
+    paging: true,
+    lengthMenu: [[10, 25, 50, 100, -1], [10, 25, 50, 100, "Alle"]],
+    columns: [
+      {data:'sku'}, {data:'naam'}, {data:'variant'}, {data:'type'}, {data:'verkopen'}, {data:'gemVerkopen'},
+      {data:'omzet'}, {data:'gemOmzet'}, {data:'verloop'}, {data:'score'},
+      {data:'voorraad'}, {data:'opVoorraad'}, {data:'duur'}
+    ]
+  });
+
+  // dropdown producttype vullen voor filter
+  let types = [...new Set(resultaten.map(r=>r.type))];
+  $('#filterType').empty().append('<option value="">Alle</option>');
+  types.forEach(t => $('#filterType').append(`<option value="${t}">${t}</option>`));
+
+  // filters
+  $('#filterType').off().on('change', function(){ table.column(3).search(this.value).draw(); });
+  $('#filterABC').off().on('change', function(){
+    let val = this.value;
+    if(val) table.column(8).search(val).draw();
+    else table.column(8).search("").draw();
+  });
+  $('#filterStock').off().on('change', function(){ table.column(11).search(this.value).draw(); });
+
+  $.fn.dataTable.ext.search = $.fn.dataTable.ext.search.filter(f => !f.customDaysFilter);
+  $.fn.dataTable.ext.search.push(
+    Object.assign(function(settings, data, dataIndex) {
+      let filter = $('#filterDays').val();
+      let duurVal = resultaten[dataIndex].duurVal;
+      if(filter==="lt30" && !(duurVal < 30)) return false;
+      if(filter==="30to60" && !(duurVal>=30 && duurVal<=60)) return false;
+      if(filter==="gt60" && !(duurVal > 60)) return false;
+      return true;
+    }, { customDaysFilter: true })
+  );
+  $('#filterDays').off().on('change', function(){ table.draw(); });
 }
 </script>
 </body>
